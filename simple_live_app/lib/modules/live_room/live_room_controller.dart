@@ -432,6 +432,7 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
     await initializePlayer();
 
     await player.open(Playlist(mediaList));
+    Log.d('[Player] 开始播放，stream-buffer-size=2097152 (2MB)');
   }
 
   void setPlayer() async {

@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:math';
 
+import 'package:dio/dio.dart';
 import 'package:simple_live_core/src/common/core_log.dart';
 import 'package:simple_live_core/src/common/http_client.dart';
 import 'package:simple_live_core/src/danmaku/kuaishou_danmaku.dart';
@@ -25,14 +26,34 @@ class KuaishouSite implements LiveSite {
 
   String cookie = "";
 
-  static const Map<String, dynamic> _defaultHeaders = {
-    'User-Agent':
-        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/107.0.0.0 Safari/537.36',
-    'Accept':
-        'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3',
-    'Accept-Language': 'zh-CN,zh;q=0.9',
-    'Connection': 'keep-alive',
-  };
+  /// 当前使用的随机 User-Agent
+  String _ua = "";
+
+  /// 生成随机 User-Agent，参考 pure_live FakeUserAgent
+  static String getRandomUserAgent() {
+    final agents = [
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15",
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0",
+    ];
+    return agents[Random().nextInt(agents.length)];
+  }
+
+  Map<String, dynamic> get _defaultHeaders {
+    if (_ua.isEmpty) {
+      _ua = getRandomUserAgent();
+    }
+    return {
+      'User-Agent': _ua,
+      'Accept':
+          'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3',
+      'Accept-Language': 'zh-CN,zh;q=0.9',
+      'Connection': 'keep-alive',
+    };
+  }
 
   Map<String, dynamic> get _headers {
     var headers = Map<String, dynamic>.from(_defaultHeaders);
@@ -40,6 +61,91 @@ class KuaishouSite implements LiveSite {
       headers['Cookie'] = cookie;
     }
     return headers;
+  }
+
+  /// 从快手页面获取 Cookie（参考 pure_live 的 Cookie 自动获取机制）
+  /// 返回获取到的 HTML 响应体，失败时返回 null
+  Future<String?> _fetchCookie(String roomId) async {
+    try {
+      // 每次获取房间详情时重新随机 UA
+      _ua = getRandomUserAgent();
+
+      final dio = HttpClient.instance.dio;
+      final response = await dio.get(
+        'https://live.kuaishou.com/u/$roomId',
+        options: Options(
+          responseType: ResponseType.plain,
+          headers: {
+            'User-Agent': _ua,
+            'Accept':
+                'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
+            'Accept-Language': 'zh-CN,zh;q=0.9',
+          },
+          followRedirects: true,
+          validateStatus: (status) => status != null && status < 400,
+        ),
+      );
+
+      // 从响应头中提取 Set-Cookie
+      final setCookies = response.headers.map['set-cookie'] ?? [];
+      final cookieParts = <String>[];
+      String? did;
+
+      for (var raw in setCookies) {
+        // Set-Cookie 格式: name=value; Path=...; Domain=...
+        final parts = raw.split(';');
+        if (parts.isEmpty) continue;
+        final nameValue = parts[0].trim();
+        cookieParts.add(nameValue);
+
+        // 提取 did（设备ID）
+        if (nameValue.startsWith('did=')) {
+          did = nameValue.substring(4);
+        }
+      }
+
+      if (cookieParts.isNotEmpty) {
+        cookie = cookieParts.join('; ');
+        CoreLog.i("快手 Cookie 获取成功，长度=${cookie.length}");
+      }
+
+      // 如果拿到了 did，调用 registerDid
+      if (did != null && did.isNotEmpty) {
+        await _registerDid(did);
+      }
+
+      // 返回 HTML 响应体，供 getRoomDetail 复用，避免重复请求
+      return response.data?.toString();
+    } catch (e) {
+      CoreLog.w("快手 Cookie 获取失败: $e");
+      // Cookie 获取失败不阻塞后续流程
+      return null;
+    }
+  }
+
+  /// 注册设备 ID（参考 pure_live 的 registerDid）
+  Future<void> _registerDid(String did) async {
+    try {
+      final dio = HttpClient.instance.dio;
+      await dio.post(
+        'https://log-sdk.ksapisrv.com/rest/log/sdk/da',
+        data: {
+          'did': did,
+          'app': 0,
+        },
+        options: Options(
+          contentType: Headers.formUrlEncodedContentType,
+          headers: {
+            'User-Agent': _ua,
+          },
+          validateStatus: (status) => true,
+        ),
+      );
+      CoreLog.i("快手 registerDid 成功: $did");
+    } catch (e) {
+      CoreLog.w("快手 registerDid 失败: $e");
+      // registerDid 失败不影响主流程
+    }
   }
 
   @override
@@ -167,7 +273,12 @@ class KuaishouSite implements LiveSite {
 
   @override
   Future<LiveRoomDetail> getRoomDetail({required String roomId}) async {
-    var html = await HttpClient.instance.getText(
+    // 先获取 Cookie（参考 pure_live 做法，确保后续 API 请求带有效 Cookie）
+    // 同时复用返回的 HTML 响应体，避免对同一 URL 发起第二次请求
+    var html = await _fetchCookie(roomId);
+
+    // 如果 _fetchCookie 返回 null（失败），降级到原来的 getText 请求
+    html ??= await HttpClient.instance.getText(
       "https://live.kuaishou.com/u/$roomId",
       queryParameters: {},
       header: _headers,
@@ -317,8 +428,7 @@ class KuaishouSite implements LiveSite {
     final playHeaders = <String, String>{
       'Referer': 'https://live.kuaishou.com/',
       'Origin': 'https://live.kuaishou.com',
-      'User-Agent':
-          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      'User-Agent': _ua.isNotEmpty ? _ua : getRandomUserAgent(),
     };
     if (cookie.isNotEmpty) {
       playHeaders['Cookie'] = cookie;
