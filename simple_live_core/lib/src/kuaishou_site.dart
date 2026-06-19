@@ -26,30 +26,202 @@ class KuaishouSite implements LiveSite {
 
   String cookie = "";
 
-  /// 当前使用的随机 User-Agent
-  String _ua = "";
+  /// 当前使用的随机 User-Agent 信息
+  Map<String, dynamic> _uaInfo = {};
 
-  /// 生成随机 User-Agent，参考 pure_live FakeUserAgent
-  static String getRandomUserAgent() {
-    final agents = [
-      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
-      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15",
-      "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0",
-    ];
-    return agents[Random().nextInt(agents.length)];
+  String get _ua => _uaInfo['userAgent']?.toString() ?? '';
+
+  // ============================================================
+  // FakeUserAgent - 参考 pure_live 的完整实现
+  // ============================================================
+
+  static final List<String> _chromeVersions = [
+    '120.0.6099.109',
+    '120.0.6099.71',
+    '120.0.6099.62',
+    '120.0.6099.56',
+    '119.0.6045.199',
+    '119.0.6045.159',
+    '119.0.6045.123',
+    '119.0.6045.105',
+    '118.0.5993.117',
+    '118.0.5993.88',
+    '118.0.5993.70',
+    '117.0.5938.139',
+    '117.0.5938.110',
+    '117.0.5938.92',
+    '116.0.5845.187',
+    '116.0.5845.179',
+    '116.0.5845.140',
+    '115.0.5790.170',
+    '115.0.5790.136',
+    '115.0.5790.102',
+    '121.0.6167.139',
+    '121.0.6167.85',
+    '122.0.6261.94',
+    '122.0.6261.69',
+    '122.0.6261.57',
+    '123.0.6312.58',
+    '123.0.6312.41',
+  ];
+
+  static final List<String> _safariVersions = [
+    '17.2',
+    '17.1.2',
+    '17.1.1',
+    '17.1',
+    '17.0',
+    '16.6',
+    '16.5.2',
+    '16.5.1',
+    '16.5',
+    '16.4',
+    '16.3',
+    '16.2',
+  ];
+
+  static final List<String> _edgeVersions = [
+    '120.0.2210.144',
+    '120.0.2210.133',
+    '120.0.2210.91',
+    '119.0.2151.97',
+    '119.0.2151.72',
+    '118.0.2088.76',
+    '118.0.2088.61',
+    '117.0.2045.60',
+    '117.0.2045.47',
+    '117.0.2045.43',
+    '121.0.2277.83',
+    '121.0.2277.70',
+    '122.0.2365.52',
+    '122.0.2365.30',
+  ];
+
+  static final List<String> _macOSDevicesVersions = [
+    '10_15_7',
+    '10_15_6',
+    '10_15_5',
+    '10_15_4',
+    '10_15_3',
+    '10_15_2',
+    '10_15_1',
+    '14_2_1',
+    '14_2',
+    '14_1_2',
+    '14_1_1',
+    '14_1',
+    '14_0',
+    '13_6_2',
+    '13_6_1',
+    '13_6',
+    '13_5_2',
+    '13_5_1',
+    '13_5',
+    '13_4_1',
+    '13_4',
+    '13_3_1',
+    '13_3',
+    '13_2_1',
+  ];
+
+  /// 生成随机 User-Agent 信息，返回 Map 格式
+  /// 返回 {userAgent, device, browser, version, v}
+  static Map<String, dynamic> fakeUserAgent() {
+    final random = Random();
+    final isMac = random.nextBool();
+    final browserType = random.nextInt(3); // 0=chrome, 1=safari, 2=edge
+
+    String userAgent;
+    String device;
+    String browser;
+    String version;
+    String v;
+
+    if (browserType == 1 && isMac) {
+      // Safari (only on Mac)
+      version = _safariVersions[random.nextInt(_safariVersions.length)];
+      final macVersion =
+          _macOSDevicesVersions[random.nextInt(_macOSDevicesVersions.length)];
+      device = 'Macintosh; Intel Mac OS X $macVersion';
+      browser = 'Safari';
+      v = version;
+      userAgent =
+          'Mozilla/5.0 ($device) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/$version Safari/605.1.15';
+    } else if (browserType == 2) {
+      // Edge
+      version = _edgeVersions[random.nextInt(_edgeVersions.length)];
+      v = version.split('.')[0];
+      if (isMac) {
+        final macVersion = _macOSDevicesVersions[
+            random.nextInt(_macOSDevicesVersions.length)];
+        device = 'Macintosh; Intel Mac OS X $macVersion';
+      } else {
+        device = 'Windows NT 10.0; Win64; x64';
+      }
+      browser = 'Edge';
+      final chromeVer =
+          _chromeVersions[random.nextInt(_chromeVersions.length)];
+      userAgent =
+          'Mozilla/5.0 ($device) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/$chromeVer Safari/537.36 Edg/$version';
+    } else {
+      // Chrome (default)
+      version = _chromeVersions[random.nextInt(_chromeVersions.length)];
+      v = version.split('.')[0];
+      if (isMac) {
+        final macVersion = _macOSDevicesVersions[
+            random.nextInt(_macOSDevicesVersions.length)];
+        device = 'Macintosh; Intel Mac OS X $macVersion';
+      } else {
+        device = 'Windows NT 10.0; Win64; x64';
+      }
+      browser = 'Chrome';
+      userAgent =
+          'Mozilla/5.0 ($device) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/$version Safari/537.36';
+    }
+
+    return {
+      'userAgent': userAgent,
+      'device': device,
+      'browser': browser,
+      'version': version,
+      'v': v,
+    };
   }
 
+  /// 构建 sec-ch-ua 头
+  String _buildSecChUa(Map<String, dynamic> uaInfo) {
+    final browser = uaInfo['browser']?.toString() ?? 'Chrome';
+    final v = uaInfo['v']?.toString() ?? '120';
+    if (browser == 'Safari') {
+      return '';
+    } else if (browser == 'Edge') {
+      return '"Chromium";v="$v", "Not A Brand";v="99", "Microsoft Edge";v="$v"';
+    } else {
+      return '"Chromium";v="$v", "Not A Brand";v="99", "Google Chrome";v="$v"';
+    }
+  }
+
+  /// 构建 sec-ch-ua-platform 头
+  String _buildSecChUaPlatform(Map<String, dynamic> uaInfo) {
+    final device = uaInfo['device']?.toString() ?? '';
+    if (device.contains('Macintosh')) {
+      return '"macOS"';
+    }
+    return '"Windows"';
+  }
+
+  // ============================================================
+  // Headers
+  // ============================================================
+
   Map<String, dynamic> get _defaultHeaders {
-    if (_ua.isEmpty) {
-      _ua = getRandomUserAgent();
+    if (_uaInfo.isEmpty) {
+      _uaInfo = fakeUserAgent();
     }
     return {
       'User-Agent': _ua,
       'Accept':
-          'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3',
+          'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
       'Accept-Language': 'zh-CN,zh;q=0.9',
       'Connection': 'keep-alive',
     };
@@ -63,22 +235,36 @@ class KuaishouSite implements LiveSite {
     return headers;
   }
 
-  /// 从快手页面获取 Cookie（参考 pure_live 的 Cookie 自动获取机制）
-  /// 返回获取到的 HTML 响应体，失败时返回 null
-  Future<String?> _fetchCookie(String roomId) async {
-    try {
-      // 每次获取房间详情时重新随机 UA
-      _ua = getRandomUserAgent();
+  // ============================================================
+  // getPageId - 参考 pure_live 的 pageId 生成器
+  // ============================================================
 
+  String getPageId() {
+    var pageId = '';
+    const charset =
+        'bjectSymhasOwnProp-0123456789ABCDEFGHIJKLMNQRTUVWXYZ_dfgiklquvxz';
+    for (var i = 0; i < 16; i++) {
+      pageId += charset[Random().nextInt(63)];
+    }
+    var currentTime = DateTime.now().millisecondsSinceEpoch;
+    return '${pageId}_$currentTime';
+  }
+
+  // ============================================================
+  // Cookie 获取 - 从快手页面获取 Cookie（包含 did）
+  // ============================================================
+
+  Future<String?> _getCookie(String url) async {
+    try {
       final dio = HttpClient.instance.dio;
       final response = await dio.get(
-        'https://live.kuaishou.com/u/$roomId',
+        url,
         options: Options(
           responseType: ResponseType.plain,
           headers: {
             'User-Agent': _ua,
             'Accept':
-                'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
+                'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
             'Accept-Language': 'zh-CN,zh;q=0.9',
           },
           followRedirects: true,
@@ -86,65 +272,133 @@ class KuaishouSite implements LiveSite {
         ),
       );
 
-      // 从响应头中提取 Set-Cookie
       final setCookies = response.headers.map['set-cookie'] ?? [];
       final cookieParts = <String>[];
-      String? did;
 
       for (var raw in setCookies) {
-        // Set-Cookie 格式: name=value; Path=...; Domain=...
         final parts = raw.split(';');
         if (parts.isEmpty) continue;
         final nameValue = parts[0].trim();
-        cookieParts.add(nameValue);
-
-        // 提取 did（设备ID）
-        if (nameValue.startsWith('did=')) {
-          did = nameValue.substring(4);
+        if (nameValue.isNotEmpty) {
+          cookieParts.add(nameValue);
         }
       }
 
       if (cookieParts.isNotEmpty) {
-        cookie = cookieParts.join('; ');
+        // 合并：用户设置的 cookie 优先，再附加页面获取的 cookie
+        final pageCookie = cookieParts.join('; ');
+        if (cookie.isNotEmpty) {
+          // 用户已有 cookie，用页面 cookie 补充缺失的字段
+          final existing = _parseCookieMap(cookie);
+          final page = _parseCookieMap(pageCookie);
+          for (var entry in page.entries) {
+            existing.putIfAbsent(entry.key, () => entry.value);
+          }
+          cookie = existing.entries.map((e) => '${e.key}=${e.value}').join('; ');
+        } else {
+          cookie = pageCookie;
+        }
         CoreLog.i("快手 Cookie 获取成功，长度=${cookie.length}");
       }
 
-      // 如果拿到了 did，调用 registerDid
-      if (did != null && did.isNotEmpty) {
-        await _registerDid(did);
+      // 从 cookie 中提取 did
+      String? did;
+      for (var part in cookieParts) {
+        if (part.startsWith('did=')) {
+          did = part.substring(4);
+          break;
+        }
+      }
+      // 也尝试从已有 cookie 中找 did
+      if ((did == null || did.isEmpty) && cookie.isNotEmpty) {
+        final match = RegExp(r'did=([^;]+)').firstMatch(cookie);
+        if (match != null) {
+          did = match.group(1);
+        }
       }
 
-      // 返回 HTML 响应体，供 getRoomDetail 复用，避免重复请求
-      return response.data?.toString();
+      if (did != null && did.isNotEmpty) {
+        await registerDid(did);
+      } else {
+        CoreLog.w("快手 Cookie 中未找到 did");
+      }
     } catch (e) {
-      CoreLog.w("快手 Cookie 获取失败: $e");
-      // Cookie 获取失败不阻塞后续流程
-      return null;
+      CoreLog.w("快手 getCookie 失败: $e");
     }
+    return null;
   }
 
-  /// 注册设备 ID（参考 pure_live 的 registerDid）
-  Future<void> _registerDid(String did) async {
+  Map<String, String> _parseCookieMap(String cookieStr) {
+    final map = <String, String>{};
+    for (var part in cookieStr.split(';')) {
+      final trimmed = part.trim();
+      final idx = trimmed.indexOf('=');
+      if (idx > 0) {
+        map[trimmed.substring(0, idx)] = trimmed.substring(idx + 1);
+      }
+    }
+    return map;
+  }
+
+  // ============================================================
+  // registerDid - 参考 pure_live 的完整 JSON 注册
+  // ============================================================
+
+  Future registerDid(String did) async {
     try {
-      final dio = HttpClient.instance.dio;
-      await dio.post(
-        'https://log-sdk.ksapisrv.com/rest/log/sdk/da',
-        data: {
-          'did': did,
-          'app': 0,
-        },
-        options: Options(
-          contentType: Headers.formUrlEncodedContentType,
-          headers: {
-            'User-Agent': _ua,
+      var data = {
+        'common': {
+          'identity_package': {'device_id': did, 'global_id': ''},
+          'app_package': {
+            'language': 'zh-CN',
+            'platform': 10,
+            'container': 'WEB',
+            'product_name': 'KS_GAME_LIVE_PC',
           },
-          validateStatus: (status) => true,
-        ),
+          'device_package': {
+            'os_version': 'NT 6.1',
+            'model': 'Windows',
+            'ua': _ua,
+          },
+          'need_encrypt': 'false',
+          'network_package': {'type': 3},
+          'h5_extra_attr':
+              '{"sdk_name":"webLogger","sdk_version":"3.9.49","sdk_bundle":"log.common.js","app_version_name":"","host_product":"","resolution":"1600x900","screen_with":1600,"screen_height":900,"device_pixel_ratio":1,"domain":"https://live.kuaishou.com"}',
+          'global_attr': '{}',
+        },
+        'logs': [
+          {
+            'client_timestamp': DateTime.now().millisecondsSinceEpoch,
+            'client_increment_id': Random().nextInt(8999) + 1000,
+            'session_id': '1eb20f88-51ac-4ecf-8dc3-ace5aefcae4f',
+            'time_zone': 'GMT+08:00',
+            'event_package': {
+              'task_event': {
+                'type': 1,
+                'status': 0,
+                'operation_type': 1,
+                'operation_direction': 0,
+                'session_id': '1eb20f88-51ac-4ecf-8dc3-ace5aefcae4f',
+                'url_package': {
+                  'page': 'GAME_DETAL_PAGE',
+                  'identity': '5316c78e-f0b6-4be2-a076-c8f9d11ebc0a',
+                  'page_type': 2,
+                  'params': '{"game_id":1001,"game_name":"王者荣耀"}',
+                },
+                'element_package': {},
+              },
+            },
+          },
+        ],
+      };
+
+      await HttpClient.instance.postJson(
+        'https://log-sdk.ksapisrv.com/rest/wd/common/log/collect/misc2?v=3.9.49&kpn=KS_GAME_LIVE_PC',
+        header: _defaultHeaders,
+        data: data,
       );
-      CoreLog.i("快手 registerDid 成功: $did");
     } catch (e) {
       CoreLog.w("快手 registerDid 失败: $e");
-      // registerDid 失败不影响主流程
     }
   }
 
@@ -230,7 +484,8 @@ class KuaishouSite implements LiveSite {
       var liveStream = item["liveStream"] as Map? ?? {};
       items.add(LiveRoomItem(
         roomId: author["id"]?.toString() ?? "",
-        title: liveStream["caption"]?.toString() ?? author["name"]?.toString() ?? "",
+        title:
+            liveStream["caption"]?.toString() ?? author["name"]?.toString() ?? "",
         cover: liveStream["poster"]?.toString() ?? "",
         userName: author["name"]?.toString() ?? "",
         online: _parseOnline(item["watchingCount"]),
@@ -259,7 +514,9 @@ class KuaishouSite implements LiveSite {
           var liveStream = liveInfo["liveStream"] as Map? ?? {};
           items.add(LiveRoomItem(
             roomId: author["id"]?.toString() ?? "",
-            title: liveStream["caption"]?.toString() ?? author["name"]?.toString() ?? "",
+            title: liveStream["caption"]?.toString() ??
+                author["name"]?.toString() ??
+                "",
             cover: liveStream["poster"]?.toString() ?? "",
             userName: author["name"]?.toString() ?? "",
             online: _parseOnline(liveInfo["watchingCount"]),
@@ -271,21 +528,92 @@ class KuaishouSite implements LiveSite {
     return LiveCategoryResult(hasMore: false, items: items);
   }
 
+  // ============================================================
+  // getRoomDetail - 严格遵循 pure_live 流程
+  // ============================================================
+
   @override
   Future<LiveRoomDetail> getRoomDetail({required String roomId}) async {
-    // 先获取 Cookie（参考 pure_live 做法，确保后续 API 请求带有效 Cookie）
-    // 同时复用返回的 HTML 响应体，避免对同一 URL 发起第二次请求
-    var html = await _fetchCookie(roomId);
+    // 1. 生成 FakeUserAgent
+    _uaInfo = fakeUserAgent();
 
-    // 如果 _fetchCookie 返回 null（失败），降级到原来的 getText 请求
-    html ??= await HttpClient.instance.getText(
-      "https://live.kuaishou.com/u/$roomId",
-      queryParameters: {},
-      header: _headers,
-    );
+    // 2. 构建完整 headers
+    final secChUa = _buildSecChUa(_uaInfo);
+    final secChUaPlatform = _buildSecChUaPlatform(_uaInfo);
 
+    final pageUrl = 'https://live.kuaishou.com/u/$roomId';
+
+    // 3. 用户设置的 cookie 优先（已在 cookie 字段中）
+
+    // 4. 获取页面 cookie（包含 did）并注册
+    await _getCookie(pageUrl);
+
+    // 5. 用 HttpClient.instance.getText() 获取 HTML
+    String html;
+    try {
+      final dio = HttpClient.instance.dio;
+      final response = await dio.get(
+        pageUrl,
+        options: Options(
+          responseType: ResponseType.plain,
+          headers: {
+            'User-Agent': _ua,
+            'Accept':
+                'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+            'Accept-Language': 'zh-CN,zh;q=0.9',
+            if (secChUa.isNotEmpty) 'sec-ch-ua': secChUa,
+            if (secChUa.isNotEmpty) 'sec-ch-ua-mobile': '?0',
+            if (secChUa.isNotEmpty) 'sec-ch-ua-platform': secChUaPlatform,
+            'sec-fetch-dest': 'document',
+            'sec-fetch-mode': 'navigate',
+            'sec-fetch-site': 'none',
+            'sec-fetch-user': '?1',
+            'upgrade-insecure-requests': '1',
+            if (cookie.isNotEmpty) 'Cookie': cookie,
+          },
+          followRedirects: true,
+          validateStatus: (status) => status != null && status < 400,
+        ),
+      );
+      html = response.data?.toString() ?? '';
+
+      // 如果这次响应有新的 Set-Cookie，也合并进来
+      final setCookies = response.headers.map['set-cookie'] ?? [];
+      if (setCookies.isNotEmpty) {
+        final newParts = <String>[];
+        for (var raw in setCookies) {
+          final parts = raw.split(';');
+          if (parts.isNotEmpty) {
+            final nv = parts[0].trim();
+            if (nv.isNotEmpty) newParts.add(nv);
+          }
+        }
+        if (newParts.isNotEmpty) {
+          final existing = _parseCookieMap(cookie);
+          final fresh = _parseCookieMap(newParts.join('; '));
+          existing.addAll(fresh);
+          cookie =
+              existing.entries.map((e) => '${e.key}=${e.value}').join('; ');
+        }
+      }
+    } catch (e) {
+      CoreLog.w("快手获取页面HTML失败: $e");
+      // 降级使用 HttpClient.instance.getText
+      html = await HttpClient.instance.getText(
+        pageUrl,
+        queryParameters: {},
+        header: _headers,
+      );
+    }
+
+    // 7. 解析 __INITIAL_STATE__ JSON
     var match =
-        RegExp(r'window\.__INITIAL_STATE__=(.*?);').firstMatch(html);
+        RegExp(r'window\.__INITIAL_STATE__\s*=\s*(\{.*?\});', dotAll: true)
+            .firstMatch(html);
+    if (match == null) {
+      // 尝试另一种匹配模式
+      match = RegExp(r'window\.__INITIAL_STATE__=(.*?);').firstMatch(html);
+    }
     if (match == null) {
       throw Exception("无法解析快手直播间数据");
     }
@@ -293,6 +621,7 @@ class KuaishouSite implements LiveSite {
     var jsonStr = match.group(1)!.replaceAll('undefined', 'null');
     Map<String, dynamic> jsonObj = jsonDecode(jsonStr);
 
+    // 8. 提取 liveroom.playList[0] 的数据
     var liveroom = jsonObj["liveroom"] as Map? ?? {};
     var playItem = liveroom["playList"]?[0] as Map? ?? {};
     var liveStream = playItem["liveStream"] as Map? ?? {};
@@ -322,7 +651,7 @@ class KuaishouSite implements LiveSite {
       introduction: author["description"]?.toString() ?? "",
       notice: "",
       status: isLiving,
-      url: "https://live.kuaishou.com/u/$roomId",
+      url: pageUrl,
       data: liveStream["playUrls"],
       danmakuData: KuaishouDanmakuArgs(
         liveStreamId: liveStreamId,
@@ -333,6 +662,10 @@ class KuaishouSite implements LiveSite {
     );
   }
 
+  // ============================================================
+  // getPlayQualites - 简化，保留 h265 降级
+  // ============================================================
+
   @override
   Future<List<LivePlayQuality>> getPlayQualites(
       {required LiveRoomDetail detail}) async {
@@ -341,43 +674,36 @@ class KuaishouSite implements LiveSite {
       var playUrls = detail.data as Map?;
       if (playUrls == null) return qualities;
 
-      // 收集所有可用的 codec 流（h264 优先，h265 作为备用）
-      List<Map<String, dynamic>> allRepresentations = [];
+      // h264 优先，h265 作为降级
+      List<Map<String, dynamic>> representations = [];
 
       var h264Reps = playUrls["h264"]?["adaptationSet"]
           ?["representation"] as List?;
-      if (h264Reps != null) {
-        allRepresentations.addAll(h264Reps.whereType<Map<String, dynamic>>());
-      }
-
-      var h265Reps = playUrls["h265"]?["adaptationSet"]
-          ?["representation"] as List?;
-      if (h265Reps != null) {
-        // 如果已有 h264，h265 作为备用追加
-        if (allRepresentations.isNotEmpty) {
-          allRepresentations.addAll(h265Reps.whereType<Map<String, dynamic>>());
-        } else {
-          allRepresentations = h265Reps.whereType<Map<String, dynamic>>().toList();
+      if (h264Reps != null && h264Reps.isNotEmpty) {
+        representations =
+            h264Reps.whereType<Map<String, dynamic>>().toList();
+      } else {
+        // h264 不可用时降级到 h265
+        var h265Reps = playUrls["h265"]?["adaptationSet"]
+            ?["representation"] as List?;
+        if (h265Reps != null && h265Reps.isNotEmpty) {
+          representations =
+              h265Reps.whereType<Map<String, dynamic>>().toList();
         }
       }
 
-      if (allRepresentations.isEmpty) {
-        CoreLog.i("快手播放数据中未找到 h264/h265 流，可用 key: ${playUrls.keys.toList()}");
+      if (representations.isEmpty) {
+        CoreLog.i(
+            "快手播放数据中未找到可用流，可用 key: ${playUrls.keys.toList()}");
         return qualities;
       }
 
-      // 按清晰度名称分组，收集所有 CDN URL
-      final qualityUrlMap = <String, List<String>>{};
-      final qualitySortMap = <String, int>{};
-
-      for (var rep in allRepresentations) {
+      for (var rep in representations) {
         final urls = <String>[];
 
-        // 主 URL
         var url = rep["url"]?.toString() ?? "";
         if (url.isNotEmpty) urls.add(url);
 
-        // backupUrls 数组（部分快手 API 会返回多个备用 CDN）
         var backupUrls = rep["backupUrls"] as List?;
         if (backupUrls != null) {
           for (var bu in backupUrls) {
@@ -388,7 +714,6 @@ class KuaishouSite implements LiveSite {
           }
         }
 
-        // 单个 backupUrl 字段
         var singleBackup = rep["backupUrl"]?.toString() ?? "";
         if (singleBackup.isNotEmpty && !urls.contains(singleBackup)) {
           urls.add(singleBackup);
@@ -399,17 +724,10 @@ class KuaishouSite implements LiveSite {
         var name = rep["name"]?.toString() ?? "未知";
         var sort = int.tryParse(rep["level"].toString()) ?? 0;
 
-        qualityUrlMap.putIfAbsent(name, () => []).addAll(urls);
-        qualitySortMap[name] = max(qualitySortMap[name] ?? 0, sort);
-      }
-
-      for (var entry in qualityUrlMap.entries) {
-        // 去重
-        var uniqueUrls = entry.value.toSet().toList();
         qualities.add(LivePlayQuality(
-          quality: entry.key,
-          sort: qualitySortMap[entry.key] ?? 0,
-          data: uniqueUrls,
+          quality: name,
+          sort: sort,
+          data: urls,
         ));
       }
 
@@ -428,7 +746,7 @@ class KuaishouSite implements LiveSite {
     final playHeaders = <String, String>{
       'Referer': 'https://live.kuaishou.com/',
       'Origin': 'https://live.kuaishou.com',
-      'User-Agent': _ua.isNotEmpty ? _ua : getRandomUserAgent(),
+      'User-Agent': _ua.isNotEmpty ? _ua : fakeUserAgent()['userAgent']!,
     };
     if (cookie.isNotEmpty) {
       playHeaders['Cookie'] = cookie;
@@ -510,8 +828,7 @@ class KuaishouSite implements LiveSite {
           userName: item["name"]?.toString() ??
               item["author"]?["name"]?.toString() ??
               "",
-          liveStatus: item["isLiving"] == true ||
-              item["liveStatus"] == true,
+          liveStatus: item["isLiving"] == true || item["liveStatus"] == true,
         ));
       }
       return LiveSearchAnchorResult(
