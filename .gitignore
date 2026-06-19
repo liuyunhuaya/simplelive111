@@ -3,3 +3,14 @@ simple_live_tv_app/.vscode/settings.json
 
 # macOS Spotlight Search index file
 *.DS_Store
+
+# Signing keys & secrets
+*.keystore
+*.jks
+key.properties
+KEYSTORE_BASE64.txt
+
+# Build outputs
+**/build/
+**/.dart_tool/
+**/.packages

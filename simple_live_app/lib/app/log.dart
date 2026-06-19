@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:device_info_plus/device_info_plus.dart';
@@ -66,7 +67,6 @@ class Log {
     addDebugLog(message, Colors.blue);
     logger.i("${DateTime.now().toString()}\n$message");
     if (writeFile) {
-      logFileWriter?.write("[INFO] $_currentTime：$message");
       writeLog(message, Level.info);
     }
   }
@@ -104,24 +104,33 @@ class Log {
 
 class LogFileWriter {
   late String fileName;
+  final Completer<void> _ready = Completer<void>();
+  IOSink? fileWriter;
+
   LogFileWriter() {
     var dt = DateFormat("yyyy-MM-dd HH-mm-ss").format(DateTime.now());
     fileName = "$dt.log";
-    initFile();
-  }
-  IOSink? fileWriter;
-  void initFile() async {
-    var supportDir = await getApplicationSupportDirectory();
-    var logDir = Directory("${supportDir.path}/log");
-    if (!await logDir.exists()) {
-      await logDir.create();
-    }
-    var logFile = File("${logDir.path}/$fileName");
-    fileWriter = logFile.openWrite(mode: FileMode.append);
-    writeSystemInfo();
+    _initFile();
   }
 
-  void write(String content) {
+  Future<void> _initFile() async {
+    try {
+      var supportDir = await getApplicationSupportDirectory();
+      var logDir = Directory("${supportDir.path}/log");
+      if (!await logDir.exists()) {
+        await logDir.create();
+      }
+      var logFile = File("${logDir.path}/$fileName");
+      fileWriter = logFile.openWrite(mode: FileMode.append);
+      _ready.complete();
+      writeSystemInfo();
+    } catch (e) {
+      _ready.completeError(e);
+    }
+  }
+
+  Future<void> write(String content) async {
+    await _ready.future;
     fileWriter?.write(content);
     fileWriter?.write("\r\n");
   }

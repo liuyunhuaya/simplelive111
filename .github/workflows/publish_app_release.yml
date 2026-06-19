@@ -13,7 +13,7 @@ jobs:
       #签出代码
       - uses: actions/checkout@v4
         with:
-          ref: master
+          ref: main
 
       #APK签名设置
       - name: Download Android keystore
@@ -40,7 +40,7 @@ jobs:
       - name: Flutter action
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: "3.38.x"
+          flutter-version: "3.44.x"
           cache: true
 
       # 打开MAC Desktop支持
@@ -150,12 +150,12 @@ jobs:
       # 签出代码
       - uses: actions/checkout@v4
         with:
-          ref: master
+          ref: main
       # 设置Flutter环境
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: "3.38.x"
+          flutter-version: "3.44.x"
           cache: true
       # 安装依赖
       - name: Update apt-get
@@ -217,12 +217,12 @@ jobs:
       # 签出代码
       - uses: actions/checkout@v4
         with:
-          ref: master
+          ref: main
       # 设置Flutter环境
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: "3.38.x"
+          flutter-version: "3.44.x"
           cache: true
       - name: Enable Flutter Desktop
         run: flutter config --enable-windows-desktop

@@ -88,6 +88,17 @@ class KuaishouDanmaku implements LiveDanmaku {
     _pollingCursor = DateTime.now().millisecondsSinceEpoch;
     _usePolling = false;
 
+    CoreLog.i("快手弹幕启动: liveStreamId=${_args!.liveStreamId}, "
+        "authorId=${_args!.authorId}, "
+        "token=${_args!.token.isNotEmpty ? '有' : '无'}, "
+        "cookie=${_args!.cookie.isNotEmpty ? '有' : '无'}");
+
+    if (_args!.liveStreamId.isEmpty) {
+      CoreLog.i("快手弹幕: liveStreamId为空，无法连接弹幕");
+      onClose?.call("liveStreamId为空，无法连接弹幕");
+      return;
+    }
+
     _dio = Dio(BaseOptions(
       connectTimeout: const Duration(seconds: 15),
       receiveTimeout: const Duration(seconds: 30),
@@ -153,6 +164,8 @@ class KuaishouDanmaku implements LiveDanmaku {
       params["cursor"] = _sseCursor;
     }
 
+    CoreLog.i("快手弹幕SSE连接: $_chatFeedUrl, params=$params");
+
     _dio
         .post(
       _chatFeedUrl,
@@ -165,6 +178,7 @@ class KuaishouDanmaku implements LiveDanmaku {
     )
         .then((response) {
       _reconnectAttempts = 0;
+      CoreLog.i("快手弹幕SSE连接成功, statusCode=${response.statusCode}");
       onReady?.call();
 
       // 启动心跳定时器（SSE模式下主要作为状态检查）
@@ -172,10 +186,17 @@ class KuaishouDanmaku implements LiveDanmaku {
 
       final stream = (response.data as ResponseBody).stream;
       final buffer = StringBuffer();
+      int chunkCount = 0;
 
       stream.listen(
         (chunk) {
-          buffer.write(utf8.decode(chunk, allowMalformed: true));
+          chunkCount++;
+          final decoded = utf8.decode(chunk, allowMalformed: true);
+          if (chunkCount <= 3) {
+            // 记录前3个数据块用于调试
+            CoreLog.i("快手弹幕SSE数据块 #$chunkCount: ${decoded.length > 200 ? decoded.substring(0, 200) + '...' : decoded}");
+          }
+          buffer.write(decoded);
 
           // SSE事件以双换行分隔
           var content = buffer.toString();
@@ -195,22 +216,23 @@ class KuaishouDanmaku implements LiveDanmaku {
         },
         onError: (e) {
           if (!_isRunning) return;
-          CoreLog.error(e);
+          CoreLog.i("快手弹幕SSE异常: $e");
           _handleDisconnect("弹幕连接异常: $e");
         },
         onDone: () {
           if (!_isRunning) return;
+          CoreLog.i("快手弹幕SSE连接关闭, 共收到 $chunkCount 个数据块");
           _handleDisconnect("弹幕连接已断开");
         },
       );
     }).catchError((e) {
       if (!_isRunning) return;
-      CoreLog.error(e);
+      CoreLog.i("快手弹幕SSE连接失败: $e");
 
       // SSE连接失败，尝试降级到长轮询
       if (!_usePolling) {
         _usePolling = true;
-        CoreLog.i("快手弹幕SSE连接失败，降级为长轮询模式");
+        CoreLog.i("快手弹幕: 降级为长轮询模式");
         onReady?.call();
         _startHeartbeatTimer();
         _pollMessages();
@@ -421,6 +443,9 @@ class KuaishouDanmaku implements LiveDanmaku {
         if (result.data is Map) {
           final data = result.data as Map;
           final list = data["data"]?["list"] as List? ?? [];
+          if (list.isEmpty) {
+            CoreLog.i("快手弹幕长轮询: 无新消息, response keys=${data.keys.toList()}");
+          }
 
           for (var item in list) {
             if (item is Map<String, dynamic>) {

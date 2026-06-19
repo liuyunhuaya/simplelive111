@@ -193,6 +193,11 @@ class KuaishouSite implements LiveSite {
     String liveStreamId = liveStream["id"]?.toString() ?? "";
     String danmakuToken = liveroom["token"]?.toString() ?? "";
 
+    CoreLog.i("快手房间详情: roomId=$roomId, isLiving=$isLiving, "
+        "liveStreamId=$liveStreamId, "
+        "token=${danmakuToken.isNotEmpty ? '有' : '无'}, "
+        "playUrls keys=${(liveStream['playUrls'] as Map?)?.keys.toList()}");
+
     return LiveRoomDetail(
       roomId: roomId,
       title: liveStream["caption"]?.toString() ??
@@ -224,21 +229,31 @@ class KuaishouSite implements LiveSite {
       var playUrls = detail.data as Map?;
       if (playUrls == null) return qualities;
 
+      // 优先 h264，其次 h265
       var representations = playUrls["h264"]?["adaptationSet"]
           ?["representation"] as List?;
-      if (representations == null) return qualities;
+      if (representations == null) {
+        representations = playUrls["h265"]?["adaptationSet"]
+            ?["representation"] as List?;
+      }
+      if (representations == null) {
+        CoreLog.i("快手播放数据中未找到 h264/h265 流，可用 key: ${playUrls.keys.toList()}");
+        return qualities;
+      }
 
       for (var rep in representations) {
+        var url = rep["url"]?.toString() ?? "";
+        if (url.isEmpty) continue;
         qualities.add(LivePlayQuality(
           quality: rep["name"]?.toString() ?? "未知",
           sort: int.tryParse(rep["level"].toString()) ?? 0,
-          data: [rep["url"]?.toString() ?? ""],
+          data: [url],
         ));
       }
 
       qualities.sort((a, b) => b.sort.compareTo(a.sort));
     } catch (e) {
-      // ignore
+      CoreLog.error(e);
     }
     return qualities;
   }
@@ -247,8 +262,19 @@ class KuaishouSite implements LiveSite {
   Future<LivePlayUrl> getPlayUrls(
       {required LiveRoomDetail detail,
       required LivePlayQuality quality}) async {
+    // 快手 CDN 需要 Referer 和 Cookie 头才能正常播放
+    final playHeaders = <String, String>{
+      'Referer': 'https://live.kuaishou.com/',
+      'Origin': 'https://live.kuaishou.com',
+      'User-Agent':
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    };
+    if (cookie.isNotEmpty) {
+      playHeaders['Cookie'] = cookie;
+    }
     return LivePlayUrl(
       urls: List<String>.from(quality.data as List),
+      headers: playHeaders,
     );
   }
 

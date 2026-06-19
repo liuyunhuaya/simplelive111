@@ -3,7 +3,7 @@ version: 1.11.4+11104
 publish_to: none
 description: "Simple Live APP"
 environment:
-  sdk: ">=3.0.5 <4.0.0"
+  sdk: ">=3.10.0 <4.0.0"
 
 dependencies:
   simple_live_core:
