@@ -52,6 +52,19 @@ mixin PlayerMixin {
     if(Platform.isAndroid){
       await pp.setProperty('force-seekable', 'yes');
     }
+
+    // ── 直播流优化参数 ──
+    // 网络超时：15秒内未收到数据则断开，避免长时间卡住
+    await pp.setProperty('network-timeout', '15');
+    // 直播流不需要大缓存，减少延迟和内存占用
+    await pp.setProperty('cache', 'no');
+    // 解复用器最大缓冲 50MB，防止快手等大码率流溢出
+    await pp.setProperty('demuxer-max-bytes', '50MB');
+    // 流缓冲大小 2MB，足够平滑又不引入过多延迟
+    await pp.setProperty('stream-buffer-size', '2MB');
+    // 断线自动重连：最多尝试5次，每次间隔2秒，总超时30秒
+    await pp.setProperty('demuxer-lavf-o',
+        'reconnect=1,reconnect_at_eof=1,reconnect_streamed=1,reconnect_delay_max=5');
   }
 
   /// 视频控制器

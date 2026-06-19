@@ -444,15 +444,20 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
   @override
   void mediaEnd() async {
     super.mediaEnd();
-    if (mediaErrorRetryCount < 2) {
+    if (mediaErrorRetryCount < 3) {
       Log.d("播放结束，尝试第${mediaErrorRetryCount + 1}次刷新");
-      if (mediaErrorRetryCount == 1) {
+      if (mediaErrorRetryCount >= 1) {
         //延迟一秒再刷新
         await Future.delayed(const Duration(seconds: 1));
       }
       mediaErrorRetryCount += 1;
-      //刷新一次
-      setPlayer();
+      // 第2次及以后重试时，重新获取播放地址（而非仅重放同一URL）
+      if (mediaErrorRetryCount >= 2 && detail.value != null && currentQuality >= 0) {
+        addSysMsg("正在重新获取播放地址...");
+        getPlayUrl();
+      } else {
+        setPlayer();
+      }
       return;
     }
 
@@ -462,24 +467,27 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
       liveStatus.value = false;
     } else {
       changePlayLine(currentLineIndex + 1);
-
-      //setPlayer();
     }
   }
 
   int mediaErrorRetryCount = 0;
   @override
   void mediaError(String error) async {
-    super.mediaEnd();
-    if (mediaErrorRetryCount < 2) {
+    super.mediaError(error);
+    if (mediaErrorRetryCount < 3) {
       Log.d("播放失败，尝试第${mediaErrorRetryCount + 1}次刷新");
-      if (mediaErrorRetryCount == 1) {
+      if (mediaErrorRetryCount >= 1) {
         //延迟一秒再刷新
         await Future.delayed(const Duration(seconds: 1));
       }
       mediaErrorRetryCount += 1;
-      //刷新一次
-      setPlayer();
+      // 第2次及以后重试时，重新获取播放地址（而非仅重放同一URL）
+      if (mediaErrorRetryCount >= 2 && detail.value != null && currentQuality >= 0) {
+        addSysMsg("播放失败，正在重新获取播放地址...");
+        getPlayUrl();
+      } else {
+        setPlayer();
+      }
       return;
     }
 
@@ -487,8 +495,6 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
       errorMsg.value = "播放失败";
       SmartDialog.showToast("播放失败:$error");
     } else {
-      //currentLineIndex += 1;
-      //setPlayer();
       changePlayLine(currentLineIndex + 1);
     }
   }

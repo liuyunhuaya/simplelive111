@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math';
 
 import 'package:simple_live_core/src/common/core_log.dart';
 import 'package:simple_live_core/src/common/http_client.dart';
@@ -229,25 +230,75 @@ class KuaishouSite implements LiveSite {
       var playUrls = detail.data as Map?;
       if (playUrls == null) return qualities;
 
-      // 优先 h264，其次 h265
-      var representations = playUrls["h264"]?["adaptationSet"]
+      // 收集所有可用的 codec 流（h264 优先，h265 作为备用）
+      List<Map<String, dynamic>> allRepresentations = [];
+
+      var h264Reps = playUrls["h264"]?["adaptationSet"]
           ?["representation"] as List?;
-      if (representations == null) {
-        representations = playUrls["h265"]?["adaptationSet"]
-            ?["representation"] as List?;
+      if (h264Reps != null) {
+        allRepresentations.addAll(h264Reps.whereType<Map<String, dynamic>>());
       }
-      if (representations == null) {
+
+      var h265Reps = playUrls["h265"]?["adaptationSet"]
+          ?["representation"] as List?;
+      if (h265Reps != null) {
+        // 如果已有 h264，h265 作为备用追加
+        if (allRepresentations.isNotEmpty) {
+          allRepresentations.addAll(h265Reps.whereType<Map<String, dynamic>>());
+        } else {
+          allRepresentations = h265Reps.whereType<Map<String, dynamic>>().toList();
+        }
+      }
+
+      if (allRepresentations.isEmpty) {
         CoreLog.i("快手播放数据中未找到 h264/h265 流，可用 key: ${playUrls.keys.toList()}");
         return qualities;
       }
 
-      for (var rep in representations) {
+      // 按清晰度名称分组，收集所有 CDN URL
+      final qualityUrlMap = <String, List<String>>{};
+      final qualitySortMap = <String, int>{};
+
+      for (var rep in allRepresentations) {
+        final urls = <String>[];
+
+        // 主 URL
         var url = rep["url"]?.toString() ?? "";
-        if (url.isEmpty) continue;
+        if (url.isNotEmpty) urls.add(url);
+
+        // backupUrls 数组（部分快手 API 会返回多个备用 CDN）
+        var backupUrls = rep["backupUrls"] as List?;
+        if (backupUrls != null) {
+          for (var bu in backupUrls) {
+            var backupUrl = bu?.toString() ?? "";
+            if (backupUrl.isNotEmpty && !urls.contains(backupUrl)) {
+              urls.add(backupUrl);
+            }
+          }
+        }
+
+        // 单个 backupUrl 字段
+        var singleBackup = rep["backupUrl"]?.toString() ?? "";
+        if (singleBackup.isNotEmpty && !urls.contains(singleBackup)) {
+          urls.add(singleBackup);
+        }
+
+        if (urls.isEmpty) continue;
+
+        var name = rep["name"]?.toString() ?? "未知";
+        var sort = int.tryParse(rep["level"].toString()) ?? 0;
+
+        qualityUrlMap.putIfAbsent(name, () => []).addAll(urls);
+        qualitySortMap[name] = max(qualitySortMap[name] ?? 0, sort);
+      }
+
+      for (var entry in qualityUrlMap.entries) {
+        // 去重
+        var uniqueUrls = entry.value.toSet().toList();
         qualities.add(LivePlayQuality(
-          quality: rep["name"]?.toString() ?? "未知",
-          sort: int.tryParse(rep["level"].toString()) ?? 0,
-          data: [url],
+          quality: entry.key,
+          sort: qualitySortMap[entry.key] ?? 0,
+          data: uniqueUrls,
         ));
       }
 
