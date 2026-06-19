@@ -79,7 +79,9 @@ jobs:
 
       #选择Xcode 15
       - name: Select Xcode 15
-        run: sudo xcode-select -s /Applications/Xcode_15.0.app/Contents/Developer
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: '15.0'
 
       #打包iOS
       - name: Build IPA
