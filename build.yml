@@ -1,0 +1,52 @@
+name: Build APK & IPA
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  # ---------- Android APK ----------
+  build-android:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: simple_live_app
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.38.x'
+          channel: stable
+
+      - run: flutter pub get
+      - run: flutter build apk --release
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-apk
+          path: simple_live_app/build/app/outputs/flutter-apk/app-release.apk
+
+  # ---------- iOS IPA（不签名）----------
+  build-ios:
+    runs-on: macos-latest
+    defaults:
+      run:
+        working-directory: simple_live_app
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.38.x'
+          channel: stable
+
+      - run: flutter pub get
+      - run: cd ios && pod install && cd ..
+      - run: flutter build ipa --no-codesign
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ios-ipa-unsigned
+          path: simple_live_app/build/ios/ipa/*.ipa
