@@ -403,7 +403,7 @@ class KuaishouSite implements LiveSite {
   }
 
   @override
-  LiveDanmaku getDanmaku() => KuaishouDanmaku();
+  LiveDanmaku getDanmaku() => LiveDanmaku();
 
   @override
   Future<List<LiveCategory>> getCategores() async {
