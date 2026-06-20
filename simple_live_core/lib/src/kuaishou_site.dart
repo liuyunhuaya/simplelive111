@@ -26,10 +26,29 @@ class KuaishouSite implements LiveSite {
 
   String cookie = "";
 
+  /// Cookie 持久化回调
+  /// APP 层可以设置此回调来实现 Cookie 的持久化存储
+  Function(String cookie)? onCookieChanged;
+
+  /// Cookie 加载回调
+  /// APP 层可以设置此回调来从持久化存储中加载 Cookie
+  Function()? onCookieLoad;
+
   /// 当前使用的随机 User-Agent 信息
   Map<String, dynamic> _uaInfo = {};
 
   String get _ua => _uaInfo['userAgent']?.toString() ?? '';
+
+  /// 设置 Cookie 并触发保存回调
+  void setCookie(String newCookie) {
+    cookie = newCookie;
+    onCookieChanged?.call(cookie);
+  }
+
+  /// 初始化时加载 Cookie
+  void initCookie() {
+    onCookieLoad?.call();
+  }
 
   // ============================================================
   // FakeUserAgent - 参考 pure_live 的完整实现
@@ -252,80 +271,151 @@ class KuaishouSite implements LiveSite {
 
   // ============================================================
   // Cookie 获取 - 从快手页面获取 Cookie（包含 did）
+  // 增强版：添加重试机制和更完整的浏览器请求头
   // ============================================================
 
+  static const int _maxRetryCount = 3;
+  static const Duration _retryDelay = Duration(seconds: 2);
+
   Future<String?> _getCookie(String url) async {
-    try {
-      final dio = HttpClient.instance.dio;
-      final response = await dio.get(
-        url,
-        options: Options(
-          responseType: ResponseType.plain,
-          headers: {
-            'User-Agent': _ua,
-            'Accept':
-                'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-            'Accept-Language': 'zh-CN,zh;q=0.9',
-          },
-          followRedirects: true,
-          validateStatus: (status) => status != null && status < 400,
-        ),
-      );
+    int retryCount = 0;
 
-      final setCookies = response.headers.map['set-cookie'] ?? [];
-      final cookieParts = <String>[];
+    while (retryCount < _maxRetryCount) {
+      try {
+        final dio = HttpClient.instance.dio;
 
-      for (var raw in setCookies) {
-        final parts = raw.split(';');
-        if (parts.isEmpty) continue;
-        final nameValue = parts[0].trim();
-        if (nameValue.isNotEmpty) {
-          cookieParts.add(nameValue);
-        }
-      }
+        // 构建更完整的浏览器请求头，模拟真实浏览器
+        final headers = _buildBrowserHeaders();
 
-      if (cookieParts.isNotEmpty) {
-        // 合并：用户设置的 cookie 优先，再附加页面获取的 cookie
-        final pageCookie = cookieParts.join('; ');
-        if (cookie.isNotEmpty) {
-          // 用户已有 cookie，用页面 cookie 补充缺失的字段
-          final existing = _parseCookieMap(cookie);
-          final page = _parseCookieMap(pageCookie);
-          for (var entry in page.entries) {
-            existing.putIfAbsent(entry.key, () => entry.value);
+        // 1. 先访问快手首页获取初始 Cookie
+        if (cookie.isEmpty && retryCount == 0) {
+          try {
+            CoreLog.i("快手: 先访问首页获取初始 Cookie");
+            final homeResponse = await dio.get(
+              'https://www.kuaishou.com/',
+              options: Options(
+                responseType: ResponseType.plain,
+                headers: headers,
+                followRedirects: true,
+                validateStatus: (status) => status != null && status < 500,
+              ),
+            );
+            _mergeCookiesFromResponse(homeResponse);
+          } catch (e) {
+            CoreLog.w("快手: 访问首页获取 Cookie 失败: $e");
           }
-          cookie = existing.entries.map((e) => '${e.key}=${e.value}').join('; ');
+        }
+
+        // 2. 访问直播间页面获取 Cookie
+        final response = await dio.get(
+          url,
+          options: Options(
+            responseType: ResponseType.plain,
+            headers: {
+              ...headers,
+              if (cookie.isNotEmpty) 'Cookie': cookie,
+            },
+            followRedirects: true,
+            validateStatus: (status) => status != null && status < 500,
+          ),
+        );
+
+        // 检查响应状态
+        final statusCode = response.statusCode ?? 0;
+        if (statusCode == 501 || statusCode == 403) {
+          CoreLog.w("快手: 获取 Cookie 遇到状态码 $statusCode，重试中...");
+          retryCount++;
+          if (retryCount < _maxRetryCount) {
+            await Future.delayed(_retryDelay * retryCount);
+            continue;
+          }
+          return null;
+        }
+
+        // 3. 合并 Cookie
+        _mergeCookiesFromResponse(response);
+
+        // 4. 从 cookie 中提取 did 并注册
+        String? did = _extractDid();
+        if (did != null && did.isNotEmpty) {
+          await registerDid(did);
+          CoreLog.i("快手 Cookie 获取成功，did=$did，cookie长度=${cookie.length}");
         } else {
-          cookie = pageCookie;
+          CoreLog.w("快手 Cookie 中未找到 did");
         }
-        CoreLog.i("快手 Cookie 获取成功，长度=${cookie.length}");
-      }
 
-      // 从 cookie 中提取 did
-      String? did;
-      for (var part in cookieParts) {
-        if (part.startsWith('did=')) {
-          did = part.substring(4);
-          break;
+        return cookie.isNotEmpty ? cookie : null;
+      } catch (e) {
+        CoreLog.w("快手 getCookie 失败 (重试 $retryCount): $e");
+        retryCount++;
+        if (retryCount < _maxRetryCount) {
+          await Future.delayed(_retryDelay * retryCount);
         }
       }
-      // 也尝试从已有 cookie 中找 did
-      if ((did == null || did.isEmpty) && cookie.isNotEmpty) {
-        final match = RegExp(r'did=([^;]+)').firstMatch(cookie);
-        if (match != null) {
-          did = match.group(1);
-        }
-      }
-
-      if (did != null && did.isNotEmpty) {
-        await registerDid(did);
-      } else {
-        CoreLog.w("快手 Cookie 中未找到 did");
-      }
-    } catch (e) {
-      CoreLog.w("快手 getCookie 失败: $e");
     }
+
     return null;
+  }
+
+  /// 构建完整的浏览器请求头
+  Map<String, dynamic> _buildBrowserHeaders() {
+    return {
+      'User-Agent': _ua,
+      'Accept':
+          'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+      'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+      'Accept-Encoding': 'gzip, deflate, br',
+      'Connection': 'keep-alive',
+      'Upgrade-Insecure-Requests': '1',
+      'Sec-Fetch-Dest': 'document',
+      'Sec-Fetch-Mode': 'navigate',
+      'Sec-Fetch-Site': 'none',
+      'Sec-Fetch-User': '?1',
+      'Cache-Control': 'max-age=0',
+      'sec-ch-ua':
+          '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
+      'sec-ch-ua-mobile': '?0',
+      'sec-ch-ua-platform': '"Windows"',
+    };
+  }
+
+  /// 从响应中合并 Cookie
+  void _mergeCookiesFromResponse(Response response) {
+    final setCookies = response.headers.map['set-cookie'] ?? [];
+    final cookieParts = <String>[];
+
+    for (var raw in setCookies) {
+      final parts = raw.split(';');
+      if (parts.isEmpty) continue;
+      final nameValue = parts[0].trim();
+      if (nameValue.isNotEmpty) {
+        cookieParts.add(nameValue);
+      }
+    }
+
+    if (cookieParts.isNotEmpty) {
+      final pageCookie = cookieParts.join('; ');
+      String newCookie;
+      if (cookie.isNotEmpty) {
+        final existing = _parseCookieMap(cookie);
+        final page = _parseCookieMap(pageCookie);
+        for (var entry in page.entries) {
+          existing.putIfAbsent(entry.key, () => entry.value);
+        }
+        newCookie = existing.entries.map((e) => '${e.key}=${e.value}').join('; ');
+      } else {
+        newCookie = pageCookie;
+      }
+      // 使用 setCookie 触发持久化回调
+      setCookie(newCookie);
+    }
+  }
+
+  /// 从 Cookie 中提取 did
+  String? _extractDid() {
+    if (cookie.isEmpty) return null;
+    final match = RegExp(r'did=([^;]+)').firstMatch(cookie);
+    return match?.group(1);
   }
 
   Map<String, String> _parseCookieMap(String cookieStr) {
@@ -558,60 +648,74 @@ class KuaishouSite implements LiveSite {
 
     // 5. 用 HttpClient.instance.getText() 获取 HTML
     String html;
-    try {
-      final dio = HttpClient.instance.dio;
-      final response = await dio.get(
-        pageUrl,
-        options: Options(
-          responseType: ResponseType.plain,
-          headers: {
-            'User-Agent': _ua,
-            'Accept':
-                'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
-            'Accept-Language': 'zh-CN,zh;q=0.9',
-            if (secChUa.isNotEmpty) 'sec-ch-ua': secChUa,
-            if (secChUa.isNotEmpty) 'sec-ch-ua-mobile': '?0',
-            if (secChUa.isNotEmpty) 'sec-ch-ua-platform': secChUaPlatform,
-            'sec-fetch-dest': 'document',
-            'sec-fetch-mode': 'navigate',
-            'sec-fetch-site': 'none',
-            'sec-fetch-user': '?1',
-            'upgrade-insecure-requests': '1',
-            if (cookie.isNotEmpty) 'Cookie': cookie,
-          },
-          followRedirects: true,
-          validateStatus: (status) => status != null && status < 400,
-        ),
-      );
-      html = response.data?.toString() ?? '';
+    int retryCount = 0;
+    const maxRetry = 3;
 
-      // 如果这次响应有新的 Set-Cookie，也合并进来
-      final setCookies = response.headers.map['set-cookie'] ?? [];
-      if (setCookies.isNotEmpty) {
-        final newParts = <String>[];
-        for (var raw in setCookies) {
-          final parts = raw.split(';');
-          if (parts.isNotEmpty) {
-            final nv = parts[0].trim();
-            if (nv.isNotEmpty) newParts.add(nv);
+    while (true) {
+      try {
+        final dio = HttpClient.instance.dio;
+        final response = await dio.get(
+          pageUrl,
+          options: Options(
+            responseType: ResponseType.plain,
+            headers: {
+              'User-Agent': _ua,
+              'Accept':
+                  'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+              'Accept-Language': 'zh-CN,zh;q=0.9',
+              'Accept-Encoding': 'gzip, deflate, br',
+              'Connection': 'keep-alive',
+              if (secChUa.isNotEmpty) 'sec-ch-ua': secChUa,
+              if (secChUa.isNotEmpty) 'sec-ch-ua-mobile': '?0',
+              if (secChUa.isNotEmpty) 'sec-ch-ua-platform': secChUaPlatform,
+              'sec-fetch-dest': 'document',
+              'sec-fetch-mode': 'navigate',
+              'sec-fetch-site': 'none',
+              'sec-fetch-user': '?1',
+              'upgrade-insecure-requests': '1',
+              if (cookie.isNotEmpty) 'Cookie': cookie,
+            },
+            followRedirects: true,
+            validateStatus: (status) => status != null && status < 500,
+          ),
+        );
+
+        final statusCode = response.statusCode ?? 0;
+
+        // 处理 501/403 错误，重试
+        if (statusCode == 501 || statusCode == 403) {
+          CoreLog.w("快手获取页面遇到状态码 $statusCode，重试 $retryCount/$maxRetry");
+          retryCount++;
+          if (retryCount >= maxRetry) {
+            throw Exception("快手服务器返回错误 ($statusCode)，请稍后再试");
           }
+          // 重新获取 Cookie
+          await _getCookie(pageUrl);
+          await Future.delayed(Duration(seconds: 2 * retryCount));
+          continue;
         }
-        if (newParts.isNotEmpty) {
-          final existing = _parseCookieMap(cookie);
-          final fresh = _parseCookieMap(newParts.join('; '));
-          existing.addAll(fresh);
-          cookie =
-              existing.entries.map((e) => '${e.key}=${e.value}').join('; ');
+
+        html = response.data?.toString() ?? '';
+
+        // 如果这次响应有新的 Set-Cookie，也合并进来
+        _mergeCookiesFromResponse(response);
+
+        break; // 成功获取，退出循环
+      } catch (e) {
+        if (retryCount >= maxRetry - 1) {
+          CoreLog.w("快手获取页面HTML失败: $e");
+          // 降级使用 HttpClient.instance.getText
+          html = await HttpClient.instance.getText(
+            pageUrl,
+            queryParameters: {},
+            header: _headers,
+          );
+          break;
         }
+        retryCount++;
+        CoreLog.w("快手获取页面失败，重试 $retryCount/$maxRetry: $e");
+        await Future.delayed(Duration(seconds: 2 * retryCount));
       }
-    } catch (e) {
-      CoreLog.w("快手获取页面HTML失败: $e");
-      // 降级使用 HttpClient.instance.getText
-      html = await HttpClient.instance.getText(
-        pageUrl,
-        queryParameters: {},
-        header: _headers,
-      );
     }
 
     // 7. 解析 __INITIAL_STATE__ JSON
