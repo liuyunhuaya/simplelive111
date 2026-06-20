@@ -23,9 +23,13 @@ class CategoryPage extends GetView<CategoryController> {
                   //text: e.name,
                   child: Row(
                     children: [
-                      Image.asset(
-                        e.logo,
-                        width: 24,
+                      ClipOval(
+                        child: Image.asset(
+                          e.logo,
+                          width: 24,
+                          height: 24,
+                          fit: BoxFit.cover,
+                        ),
                       ),
                       AppStyle.hGap8,
                       Text(e.name),

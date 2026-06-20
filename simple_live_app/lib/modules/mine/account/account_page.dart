@@ -26,10 +26,13 @@ class AccountPage extends GetView<AccountController> {
           ),
           Obx(
             () => ListTile(
-              leading: Image.asset(
-                'assets/images/bilibili_2.png',
-                width: 36,
-                height: 36,
+              leading: ClipOval(
+                child: Image.asset(
+                  'assets/images/bilibili_2.png',
+                  width: 36,
+                  height: 36,
+                  fit: BoxFit.cover,
+                ),
               ),
               title: const Text("哔哩哔哩"),
               subtitle: Text(BiliBiliAccountService.instance.name.value),
@@ -40,10 +43,13 @@ class AccountPage extends GetView<AccountController> {
             ),
           ),
           ListTile(
-            leading: Image.asset(
-              'assets/images/douyu.png',
-              width: 36,
-              height: 36,
+            leading: ClipOval(
+              child: Image.asset(
+                'assets/images/douyu.png',
+                width: 36,
+                height: 36,
+                fit: BoxFit.cover,
+              ),
             ),
             title: const Text("斗鱼直播"),
             subtitle: const Text("无需登录"),
@@ -51,10 +57,13 @@ class AccountPage extends GetView<AccountController> {
             trailing: const Icon(Icons.chevron_right),
           ),
           ListTile(
-            leading: Image.asset(
-              'assets/images/huya.png',
-              width: 36,
-              height: 36,
+            leading: ClipOval(
+              child: Image.asset(
+                'assets/images/huya.png',
+                width: 36,
+                height: 36,
+                fit: BoxFit.cover,
+              ),
             ),
             title: const Text("虎牙直播"),
             subtitle: const Text("无需登录"),
@@ -63,10 +72,13 @@ class AccountPage extends GetView<AccountController> {
           ),
           Obx(
             () => ListTile(
-              leading: Image.asset(
-                'assets/images/douyin.png',
-                width: 36,
-                height: 36,
+              leading: ClipOval(
+                child: Image.asset(
+                  'assets/images/douyin.png',
+                  width: 36,
+                  height: 36,
+                  fit: BoxFit.cover,
+                ),
               ),
               title: const Text("抖音直播"),
               subtitle: Text(DouyinAccountService.instance.hasCookie.value
@@ -80,10 +92,13 @@ class AccountPage extends GetView<AccountController> {
           ),
           Obx(
             () => ListTile(
-              leading: Image.asset(
-                'assets/images/kuaishou.png',
-                width: 36,
-                height: 36,
+              leading: ClipOval(
+                child: Image.asset(
+                  'assets/images/kuaishou.png',
+                  width: 36,
+                  height: 36,
+                  fit: BoxFit.cover,
+                ),
               ),
               title: const Text("快手直播"),
               subtitle: Text(KuaishouAccountService.instance.hasCookie.value

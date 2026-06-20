@@ -66,10 +66,13 @@ class IndexedSettingsPage extends GetView<IndexedSettingsController> {
                       key: ValueKey(e.id),
                       visualDensity: VisualDensity.compact,
                       title: Text(e.name),
-                      leading: Image.asset(
-                        e.logo,
-                        width: 24,
-                        height: 24,
+                      leading: ClipOval(
+                        child: Image.asset(
+                          e.logo,
+                          width: 24,
+                          height: 24,
+                          fit: BoxFit.cover,
+                        ),
                       ),
                       trailing: const Icon(Icons.drag_handle),
                     );

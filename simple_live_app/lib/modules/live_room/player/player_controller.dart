@@ -51,17 +51,8 @@ mixin PlayerMixin {
     // media_kit 仓库更新导致的问题，临时解决办法
     if(Platform.isAndroid){
       await pp.setProperty('force-seekable', 'yes');
+      await pp.setProperty('hwdec', 'no');  // 禁用硬件解码，使用软件解码
     }
-
-    // ── 直播流优化参数（对齐 pure_live） ──
-    // 网络超时：30秒内未收到数据则断开
-    await pp.setProperty('network-timeout', '30');
-    // 增大探测尺寸，加快直播流识别
-    await pp.setProperty('demuxer-lavf-probsize', '2097152');
-    // 缩短分析时长，加快起播速度
-    await pp.setProperty('demuxer-lavf-analyzeduration', '10');
-    Log.d('[Player] 直播流参数已设置: network-timeout=30, '
-        'demuxer-lavf-probsize=2097152, demuxer-lavf-analyzeduration=10');
   }
 
   /// 视频控制器

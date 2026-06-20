@@ -486,7 +486,11 @@ class KuaishouSite implements LiveSite {
         roomId: author["id"]?.toString() ?? "",
         title:
             liveStream["caption"]?.toString() ?? author["name"]?.toString() ?? "",
-        cover: liveStream["poster"]?.toString() ?? "",
+        cover: liveStream["poster"]?.toString() ??
+            liveStream["coverUrl"]?.toString() ??
+            item["poster"]?.toString() ??
+            item["coverUrl"]?.toString() ??
+            "",
         userName: author["name"]?.toString() ?? "",
         online: _parseOnline(item["watchingCount"]),
       ));
@@ -517,7 +521,11 @@ class KuaishouSite implements LiveSite {
             title: liveStream["caption"]?.toString() ??
                 author["name"]?.toString() ??
                 "",
-            cover: liveStream["poster"]?.toString() ?? "",
+            cover: liveStream["poster"]?.toString() ??
+                liveStream["coverUrl"]?.toString() ??
+                liveInfo["poster"]?.toString() ??
+                liveInfo["coverUrl"]?.toString() ??
+                "",
             userName: author["name"]?.toString() ?? "",
             online: _parseOnline(liveInfo["watchingCount"]),
           ));
@@ -644,7 +652,11 @@ class KuaishouSite implements LiveSite {
       title: liveStream["caption"]?.toString() ??
           gameInfo["name"]?.toString() ??
           "",
-      cover: liveStream["poster"]?.toString() ?? "",
+      cover: liveStream["poster"]?.toString() ??
+          liveStream["coverUrl"]?.toString() ??
+          playItem["poster"]?.toString() ??
+          playItem["coverUrl"]?.toString() ??
+          "",
       userName: author["name"]?.toString() ?? "",
       userAvatar: author["avatar"]?.toString() ?? "",
       online: _parseOnline(playItem["watchingCount"]),
@@ -744,8 +756,10 @@ class KuaishouSite implements LiveSite {
       required LivePlayQuality quality}) async {
     // pure_live 对快手不传任何额外 headers，快手 CDN URL 是带签名的，
     // 额外 headers（Referer/Cookie/UA）可能导致 CDN 鉴权失败
+    final urls = List<String>.from(quality.data as List);
+    CoreLog.i('快手播放地址: $urls');
     return LivePlayUrl(
-      urls: List<String>.from(quality.data as List),
+      urls: urls,
       headers: {},
     );
   }
@@ -777,7 +791,9 @@ class KuaishouSite implements LiveSite {
               item["title"]?.toString() ??
               "",
           cover: liveStream["poster"]?.toString() ??
+              liveStream["coverUrl"]?.toString() ??
               item["poster"]?.toString() ??
+              item["coverUrl"]?.toString() ??
               "",
           userName: author["name"]?.toString() ?? "",
           online: _parseOnline(item["watchingCount"]),

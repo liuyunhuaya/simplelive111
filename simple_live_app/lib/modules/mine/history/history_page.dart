@@ -65,9 +65,13 @@ class HistoryPage extends GetView<HistoryController> {
                   Expanded(
                     child: Row(
                       children: [
-                        Image.asset(
-                          site.logo,
-                          width: 20,
+                        ClipOval(
+                          child: Image.asset(
+                            site.logo,
+                            width: 20,
+                            height: 20,
+                            fit: BoxFit.cover,
+                          ),
                         ),
                         AppStyle.hGap4,
                         Text(
