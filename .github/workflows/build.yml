@@ -1,60 +1,292 @@
-name: Build APK & IPA
+name: Build
 
 on:
-  push:
-    branches: [main, master]
   workflow_dispatch:
+    inputs:
+      build_ios:
+        description: 'Build iOS'
+        type: boolean
+        default: true
+      build_windows:
+        description: 'Build Windows'
+        type: boolean
+        default: true
+      build_macos:
+        description: 'Build macOS'
+        type: boolean
+        default: true
 
 jobs:
-  # ---------- Android APK ----------
-  build-android:
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: simple_live_app
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: subosito/flutter-action@v2
-        with:
-          flutter-version: '3.44.x'
-          channel: stable
-
-      - run: flutter pub cache clean
-      - run: flutter pub get
-      - run: flutter build apk --release
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: android-apk
-          path: simple_live_app/build/app/outputs/flutter-apk/app-release.apk
-
-  # ---------- iOS IPA（不签名）----------
   build-ios:
-    runs-on: macos-15
-    defaults:
-      run:
-        working-directory: simple_live_app
+    name: Build iOS
+    runs-on: macos-14
+    if: ${{ github.event.inputs.build_ios == 'true' }}
+    
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: subosito/flutter-action@v2
+      - name: Checkout code
+        uses: actions/checkout@v4
         with:
-          flutter-version: '3.44.x'
-          channel: stable
-
-      - name: Select Xcode 26.1
+          fetch-depth: 0
+          clean: true
+        
+      #设置Flutter
+      - name: Flutter action
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.38.x"
+          cache: false  # 禁用缓存，确保干净环境
+          
+      - name: Setup Xcode
         uses: maxim-lobanov/setup-xcode@v1
         with:
-          xcode-version: '26.1'
-
-      - run: flutter pub cache clean
-      - run: flutter pub get
-      - run: cd ios && pod install && cd ..
-
-      - run: flutter build ipa --no-codesign
-
-      - uses: actions/upload-artifact@v4
+          xcode-version: '15.2'
+          
+      - name: Flutter Doctor
+        run: |
+          flutter doctor -v
+          flutter --version
+          
+      - name: Clean iOS build
+        working-directory: simple_live_app
+        run: |
+          flutter clean
+          rm -rf ios/Pods
+          rm -rf ios/Podfile.lock
+          rm -rf ~/Library/Caches/CocoaPods
+          
+      - name: Clear all caches
+        run: |
+          flutter pub cache clean --force
+          dart pub cache clean --force
+          rm -rf ~/.pub-cache
+          rm -rf ~/Library/Caches/pub
+        continue-on-error: true
+          
+      - name: Install simple_live_core dependencies (with retry)
+        working-directory: simple_live_core
+        run: |
+          flutter pub get || flutter pub get
+          flutter pub upgrade
+        
+      - name: Install simple_live_app dependencies (with retry)
+        working-directory: simple_live_app
+        run: |
+          flutter pub get || flutter pub get
+          flutter pub upgrade
+        
+      - name: Verify critical files
+        run: |
+          # 验证关键文件存在
+          if [[ ! -f "simple_live_core/lib/src/scripts/douyu_sign.dart" ]]; then
+            echo "Error: douyu_sign.dart not found!"
+            exit 1
+          fi
+          echo "All critical files verified"
+          
+      - name: Run build_runner
+        working-directory: simple_live_app
+        run: dart run build_runner build --delete-conflicting-outputs
+        
+      - name: Fix FollowUser adapter for backward compatibility
+        working-directory: simple_live_app
+        run: dart run scripts/fix_follow_user_adapter.dart
+        continue-on-error: false
+          
+      - name: Install CocoaPods
+        working-directory: simple_live_app/ios
+        run: pod install
+          
+      - name: Build iOS IPA
+        working-directory: simple_live_app
+        run: |
+          flutter build ios --release --no-codesign
+          
+      - name: Create IPA
+        working-directory: simple_live_app
+        run: |
+          mkdir -p Payload
+          cp -r build/ios/iphoneos/Runner.app Payload/
+          zip -r SimpleLive.ipa Payload
+          rm -rf Payload
+          
+      - name: Upload iOS artifact
+        uses: actions/upload-artifact@v4
         with:
-          name: ios-ipa-unsigned
-          path: simple_live_app/build/ios/ipa/*.ipa
+          name: SimpleLive-iOS
+          path: simple_live_app/SimpleLive.ipa
+          
+  build-windows:
+    name: Build Windows
+    runs-on: windows-latest
+    if: ${{ github.event.inputs.build_windows == 'true' }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          clean: true
+        
+      #设置Flutter
+      - name: Flutter action
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.38.x"
+          cache: false  # 禁用缓存，确保干净环境
+          
+      - name: Clean Windows build
+        working-directory: simple_live_app
+        run: flutter clean
+          
+      - name: Clear all caches
+        run: |
+          flutter pub cache clean --force
+          dart pub cache clean --force
+          if (Test-Path "~/.pub-cache") { Remove-Item -Recurse -Force "~/.pub-cache" }
+          if (Test-Path "$env:LOCALAPPDATA\Pub\Cache") { Remove-Item -Recurse -Force "$env:LOCALAPPDATA\Pub\Cache" }
+        continue-on-error: true
+        shell: pwsh
+          
+      - name: Install simple_live_core dependencies (with retry)
+        working-directory: simple_live_core
+        run: |
+          flutter pub get || flutter pub get
+          flutter pub upgrade
+        
+      - name: Install simple_live_app dependencies (with retry)
+        working-directory: simple_live_app
+        run: |
+          flutter pub get || flutter pub get
+          flutter pub upgrade
+        
+      - name: Verify critical files
+        shell: pwsh
+        run: |
+          # 验证关键文件存在
+          if (!(Test-Path "simple_live_core/lib/src/scripts/douyu_sign.dart")) {
+            Write-Error "douyu_sign.dart not found!"
+            exit 1
+          }
+          Write-Host "All critical files verified"
+          
+      - name: Run build_runner
+        working-directory: simple_live_app
+        run: dart run build_runner build --delete-conflicting-outputs
+        
+      - name: Fix FollowUser adapter for backward compatibility
+        working-directory: simple_live_app
+        run: dart run scripts/fix_follow_user_adapter.dart
+        
+      - name: Build Windows
+        working-directory: simple_live_app
+        run: flutter build windows --release
+        
+      - name: Create ZIP package
+        shell: pwsh
+        run: |
+          $ReleasePath = "simple_live_app/build/windows/x64/runner/Release"
+          Compress-Archive -Path "$ReleasePath/*" -DestinationPath "SimpleLive-Windows.zip" -Force
+          
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SimpleLive-Windows
+          path: SimpleLive-Windows.zip
+          
+  build-macos:
+    name: Build macOS
+    runs-on: macos-14
+    if: ${{ github.event.inputs.build_macos == 'true' }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          clean: true
+        
+      #设置Flutter
+      - name: Flutter action
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.38.x"
+          cache: false  # 禁用缓存，确保干净环境
+          
+      # 打开MAC Desktop支持
+      - name: Enable Flutter Desktop
+        run: flutter config --enable-macos-desktop
+
+      # 清理构建缓存
+      - name: Clean macOS build
+        working-directory: simple_live_app
+        run: |
+          flutter clean
+          rm -rf macos/Pods
+          rm -rf macos/Podfile.lock
+        
+      # 清理所有缓存
+      - name: Clear all caches
+        run: |
+          flutter pub cache clean --force
+          dart pub cache clean --force
+          rm -rf ~/.pub-cache
+          rm -rf ~/Library/Caches/pub
+          rm -rf ~/Library/Caches/CocoaPods
+        continue-on-error: true
+        
+      # 安装 simple_live_core 依赖 (带重试)
+      - name: Install simple_live_core dependencies (with retry)
+        working-directory: simple_live_core
+        run: |
+          flutter pub get || flutter pub get
+          flutter pub upgrade
+        
+      # 更新Flutter的packages (带重试)
+      - name: Install simple_live_app dependencies (with retry)
+        working-directory: simple_live_app
+        run: |
+          flutter pub get || flutter pub get
+          flutter pub upgrade
+          
+      # 验证关键文件
+      - name: Verify critical files
+        run: |
+          # 验证关键文件存在
+          if [[ ! -f "simple_live_core/lib/src/scripts/douyu_sign.dart" ]]; then
+            echo "Error: douyu_sign.dart not found!"
+            exit 1
+          fi
+          echo "All critical files verified"
+          
+      # 运行 build_runner
+      - name: Run build_runner
+        working-directory: simple_live_app
+        run: dart run build_runner build --delete-conflicting-outputs
+        
+      # 修复FollowUser适配器以支持旧版本数据
+      - name: Fix FollowUser adapter for backward compatibility
+        working-directory: simple_live_app
+        run: dart run scripts/fix_follow_user_adapter.dart
+
+      # 安装appdmg
+      - name: Install appdmg
+        run: npm install -g appdmg
+
+      # 设置flutter_distributor环境
+      - name: Install flutter_distributor
+        run: dart pub global activate flutter_distributor
+
+      # 打包MAC
+      - name: Build macOS
+        run: |
+          cd simple_live_app
+          flutter_distributor package --platform macos --targets dmg,zip --skip-clean
+
+      # 上传MAC至Artifacts
+      - name: Upload macOS to Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: SimpleLive-Mac
+          path: |
+            simple_live_app/build/dist/*/*.dmg
+            simple_live_app/build/dist/*/*.zip
