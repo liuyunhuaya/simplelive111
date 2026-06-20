@@ -9,7 +9,7 @@ on:
 jobs:
   # 打包Android、iOS、Mac
   build-mac-ios-android:
-    runs-on: macos-latest
+    runs-on: macos-15
 
     permissions:
       contents: write
@@ -48,6 +48,12 @@ jobs:
           flutter-version: "3.44.x"
           cache: true
 
+      # 选择Xcode 26.1
+      - name: Select Xcode 26.1
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: '26.1'
+
       # 打开MAC Desktop支持
       - name: Enable Flutter Desktop
         run: flutter config --enable-macos-desktop
@@ -81,12 +87,6 @@ jobs:
             simple_live_app/build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk
             simple_live_app/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
             simple_live_app/build/app/outputs/flutter-apk/app-x86_64-release.apk
-
-      #选择Xcode 15
-      - name: Select Xcode 15
-        uses: maxim-lobanov/setup-xcode@v1
-        with:
-          xcode-version: '15.0'
 
       #打包iOS
       - name: Build IPA
