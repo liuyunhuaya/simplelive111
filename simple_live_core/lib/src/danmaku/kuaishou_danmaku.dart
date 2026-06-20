@@ -1,8 +1,12 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
 import 'package:simple_live_core/simple_live_core.dart';
+import 'package:simple_live_core/src/common/kuaishou_proto_helper.dart';
+import 'package:simple_live_core/src/common/web_socket_util.dart';
 
 /// 快手弹幕连接参数
 class KuaishouDanmakuArgs {
@@ -18,11 +22,15 @@ class KuaishouDanmakuArgs {
   /// 登录Cookie
   final String cookie;
 
+  /// WebSocket连接地址
+  final String wsUrl;
+
   KuaishouDanmakuArgs({
     required this.liveStreamId,
     required this.authorId,
     required this.token,
     required this.cookie,
+    this.wsUrl = "",
   });
 
   @override
@@ -32,19 +40,19 @@ class KuaishouDanmakuArgs {
       "authorId": authorId,
       "token": token,
       "cookie": cookie,
+      "wsUrl": wsUrl,
     });
   }
 }
 
 /// 快手直播弹幕实现
 ///
-/// 快手Web端弹幕采用SSE (Server-Sent Events) 方式推送，
-/// 通过 POST 请求 `live_api/chat/feed` 接口接收实时弹幕流，
-/// 而非WebSocket长连接。本实现遵循快手的SSE协议，
-/// 同时提供HTTP长轮询作为降级方案。
+/// 快手Web端弹幕采用 WebSocket + Protobuf 方式推送。
+/// 本实现通过 WebSocket 连接快手弹幕服务器，
+/// 接收实时弹幕、礼物、点赞等消息。
 class KuaishouDanmaku implements LiveDanmaku {
   @override
-  int heartbeatTime = 20 * 1000;
+  int heartbeatTime = 30 * 1000; // 30秒心跳
 
   @override
   Function(LiveMessage msg)? onMessage;
@@ -53,44 +61,23 @@ class KuaishouDanmaku implements LiveDanmaku {
   @override
   Function()? onReady;
 
-  static const String _chatFeedUrl =
-      "https://live.kuaishou.com/live_api/chat/feed";
-
-  /// 长轮询拉取弹幕的API地址
-  static const String _chatListUrl =
-      "https://live.kuaishou.com/live_api/chat/list";
-
   KuaishouDanmakuArgs? _args;
-  CancelToken? _cancelToken;
-  Timer? _reconnectTimer;
-  Timer? _heartbeatTimer;
+  WebScoketUtils? _webSocketUtils;
   bool _isRunning = false;
-  int _reconnectAttempts = 0;
-  static const int _maxReconnectAttempts = 5;
 
-  /// SSE重连游标，用于断线续连
-  String _sseCursor = "";
-
-  /// 长轮询时间戳游标
-  int _pollingCursor = 0;
-
-  /// 当前是否使用长轮询模式（SSE失败时降级）
-  bool _usePolling = false;
-
-  late Dio _dio;
+  /// 默认的快手弹幕 WebSocket 地址
+  static const String _defaultWsUrl =
+      "wss://live-ws-pkg.kuaishou.com/websocket";
 
   @override
   Future start(dynamic args) async {
     _args = args as KuaishouDanmakuArgs;
     _isRunning = true;
-    _reconnectAttempts = 0;
-    _sseCursor = "";
-    _pollingCursor = DateTime.now().millisecondsSinceEpoch;
-    _usePolling = false;
 
     CoreLog.i("快手弹幕启动: liveStreamId=${_args!.liveStreamId}, "
         "authorId=${_args!.authorId}, "
         "token=${_args!.token.isNotEmpty ? '有' : '无'}, "
+        "wsUrl=${_args!.wsUrl.isNotEmpty ? '有' : '无'}, "
         "cookie=${_args!.cookie.isNotEmpty ? '有' : '无'}");
 
     if (_args!.liveStreamId.isEmpty) {
@@ -99,21 +86,13 @@ class KuaishouDanmaku implements LiveDanmaku {
       return;
     }
 
-    _dio = Dio(BaseOptions(
-      connectTimeout: const Duration(seconds: 15),
-      receiveTimeout: const Duration(seconds: 30),
-      sendTimeout: const Duration(seconds: 15),
-      headers: _buildHeaders(),
-    ));
-
-    _connectSSE();
+    _connectWebSocket();
   }
 
   Map<String, dynamic> _buildHeaders() {
     final headers = <String, dynamic>{
       'User-Agent':
           'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-      'Accept': 'text/event-stream',
       'Accept-Language': 'zh-CN,zh;q=0.9',
       'Origin': 'https://live.kuaishou.com',
       'Referer': 'https://live.kuaishou.com/',
@@ -127,232 +106,164 @@ class KuaishouDanmaku implements LiveDanmaku {
   @override
   Future stop() async {
     _isRunning = false;
-    _cancelToken?.cancel();
-    _cancelToken = null;
-    _reconnectTimer?.cancel();
-    _reconnectTimer = null;
-    _heartbeatTimer?.cancel();
-    _heartbeatTimer = null;
+    _webSocketUtils?.close();
+    _webSocketUtils = null;
     onMessage = null;
     onClose = null;
     onReady = null;
-    _dio.close(force: true);
   }
 
   @override
   void heartbeat() {
-    // SSE模式下由HTTP连接自身保活，无需额外心跳
-    // 长轮询模式下每次请求即为心跳
+    if (_webSocketUtils != null && _isRunning) {
+      try {
+        final heartbeatMsg = KuaishouProtoHelper.buildHeartbeatMessage();
+        _webSocketUtils?.sendMessage(heartbeatMsg);
+        CoreLog.i("快手弹幕心跳已发送");
+      } catch (e) {
+        CoreLog.w("快手弹幕心跳发送失败: $e");
+      }
+    }
   }
 
-  // ──────────────────── SSE 连接 ────────────────────
+  // ──────────────────── WebSocket 连接 ────────────────────
 
-  /// 通过SSE连接快手弹幕推送接口
-  void _connectSSE() {
+  /// 通过WebSocket连接快手弹幕服务器
+  void _connectWebSocket() {
     if (!_isRunning || _args == null) return;
 
-    _cancelToken?.cancel();
-    _cancelToken = CancelToken();
+    // 确定 WebSocket URL
+    String wsUrl = _args!.wsUrl;
+    if (wsUrl.isEmpty) {
+      wsUrl = _defaultWsUrl;
+    }
 
-    final params = <String, dynamic>{
-      "liveStreamId": _args!.liveStreamId,
-    };
+    // 添加连接参数
+    final uri = Uri.parse(wsUrl);
+    final queryParams = Map<String, String>.from(uri.queryParameters);
     if (_args!.token.isNotEmpty) {
-      params["token"] = _args!.token;
+      queryParams['token'] = _args!.token;
     }
-    if (_sseCursor.isNotEmpty) {
-      params["cursor"] = _sseCursor;
-    }
+    queryParams['liveStreamId'] = _args!.liveStreamId;
+    final finalUri = uri.replace(queryParameters: queryParams);
 
-    CoreLog.i("快手弹幕SSE连接: $_chatFeedUrl, params=$params");
+    CoreLog.i("快手弹幕WebSocket连接: ${finalUri.toString()}");
 
-    _dio
-        .post(
-      _chatFeedUrl,
-      data: params,
-      options: Options(
-        responseType: ResponseType.stream,
-        contentType: Headers.formUrlEncodedContentType,
-      ),
-      cancelToken: _cancelToken,
-    )
-        .then((response) {
-      _reconnectAttempts = 0;
-      CoreLog.i("快手弹幕SSE连接成功, statusCode=${response.statusCode}");
-      onReady?.call();
-
-      // 启动心跳定时器（SSE模式下主要作为状态检查）
-      _startHeartbeatTimer();
-
-      final stream = (response.data as ResponseBody).stream;
-      final buffer = StringBuffer();
-      int chunkCount = 0;
-
-      stream.listen(
-        (chunk) {
-          chunkCount++;
-          final decoded = utf8.decode(chunk, allowMalformed: true);
-          if (chunkCount <= 3) {
-            // 记录前3个数据块用于调试
-            CoreLog.i("快手弹幕SSE数据块 #$chunkCount: ${decoded.length > 200 ? decoded.substring(0, 200) + '...' : decoded}");
-          }
-          buffer.write(decoded);
-
-          // SSE事件以双换行分隔
-          var content = buffer.toString();
-          var events = content.split('\n\n');
-
-          // 最后一段可能不完整，保留在buffer中
-          buffer.clear();
-          if (!content.endsWith('\n\n')) {
-            buffer.write(events.removeLast());
-          }
-
-          for (var event in events) {
-            if (event.trim().isNotEmpty) {
-              _parseSSEEvent(event);
-            }
-          }
-        },
-        onError: (e) {
-          if (!_isRunning) return;
-          CoreLog.i("快手弹幕SSE异常: $e");
-          _handleDisconnect("弹幕连接异常: $e");
-        },
-        onDone: () {
-          if (!_isRunning) return;
-          CoreLog.i("快手弹幕SSE连接关闭, 共收到 $chunkCount 个数据块");
-          _handleDisconnect("弹幕连接已断开");
-        },
-      );
-    }).catchError((e) {
-      if (!_isRunning) return;
-      CoreLog.i("快手弹幕SSE连接失败: $e");
-
-      // SSE连接失败，尝试降级到长轮询
-      if (!_usePolling) {
-        _usePolling = true;
-        CoreLog.i("快手弹幕: 降级为长轮询模式");
+    _webSocketUtils = WebScoketUtils(
+      url: finalUri.toString(),
+      heartBeatTime: heartbeatTime,
+      headers: _buildHeaders(),
+      onReady: () {
+        CoreLog.i("快手弹幕WebSocket连接成功");
         onReady?.call();
-        _startHeartbeatTimer();
-        _pollMessages();
-      } else {
-        _handleDisconnect("弹幕连接失败: $e");
-      }
-    });
+        _joinRoom();
+      },
+      onMessage: (data) {
+        _handleMessage(data);
+      },
+      onHeartBeat: () {
+        heartbeat();
+      },
+      onReconnect: () {
+        CoreLog.i("快手弹幕WebSocket断开，正在重连...");
+        onClose?.call("弹幕连接断开，正在重连...");
+      },
+      onClose: (msg) {
+        CoreLog.i("快手弹幕WebSocket关闭: $msg");
+        if (_isRunning) {
+          onClose?.call("弹幕连接已断开: $msg");
+        }
+      },
+    );
+
+    _webSocketUtils?.connect();
   }
 
-  // ──────────────────── SSE 事件解析 ────────────────────
-
-  /// 解析SSE格式事件
-  ///
-  /// SSE事件格式:
-  /// ```
-  /// event: <eventType>
-  /// data: <jsonData>
-  /// ```
-  void _parseSSEEvent(String rawEvent) {
-    String? eventType;
-    String? data;
-
-    for (var line in rawEvent.split('\n')) {
-      if (line.startsWith('event:')) {
-        eventType = line.substring(6).trim();
-      } else if (line.startsWith('data:')) {
-        data = line.substring(5).trim();
-      }
-    }
-
-    if (data == null || data.isEmpty) return;
+  /// 加入房间，发送认证消息
+  void _joinRoom() {
+    if (_webSocketUtils == null || _args == null) return;
 
     try {
-      final json = jsonDecode(data);
-      _handleEvent(eventType ?? json["type"]?.toString(), json);
-    } catch (_) {
-      // 忽略无法解析的事件（如SSE注释行 : keepalive）
+      final joinMsg = KuaishouProtoHelper.buildJoinRoomMessage(
+        token: _args!.token,
+        liveStreamId: _args!.liveStreamId,
+      );
+      _webSocketUtils?.sendMessage(joinMsg);
+      CoreLog.i("快手弹幕已发送加入房间消息");
+    } catch (e) {
+      CoreLog.w("快手弹幕发送加入房间消息失败: $e");
     }
   }
 
-  /// 统一事件分发处理
-  void _handleEvent(String? eventType, Map<String, dynamic> json) {
-    switch (eventType) {
-      case "chat":
-      case "chatMessage":
-      case "comment":
-        _handleChatMessage(json);
-        break;
-      case "online":
-      case "onlineCount":
-      case "viewerCount":
-      case "watchingCount":
-        _handleOnlineCount(json);
-        break;
-      case "gift":
-      case "giftMessage":
-      case "sendGift":
-        _handleGiftMessage(json);
-        break;
-      case "enter":
-      case "enterRoom":
-        _handleEnterRoom(json);
-        break;
-      case "like":
-      case "likeMessage":
-        // 点赞消息，暂不处理
-        break;
-      default:
-        // 未知类型，尝试按结构自动识别
-        _autoDetectMessage(json);
-        break;
-    }
+  // ──────────────────── WebSocket 消息处理 ────────────────────
 
-    // 更新游标
-    if (json.containsKey("cursor")) {
-      _sseCursor = json["cursor"].toString();
+  /// 处理接收到的WebSocket消息
+  void _handleMessage(dynamic data) {
+    if (!_isRunning) return;
+
+    try {
+      // 使用 Protobuf 解析器解析消息
+      final messages = KuaishouProtoHelper.parseMessages(data);
+
+      for (var message in messages) {
+        _handleParsedMessage(message);
+      }
+    } catch (e) {
+      CoreLog.w("快手弹幕消息处理失败: $e");
+    }
+  }
+
+  /// 处理解析后的消息
+  void _handleParsedMessage(KuaishouMessage message) {
+    switch (message.type) {
+      case KuaishouMessageType.chat:
+        _handleChatMessageParsed(message);
+        break;
+      case KuaishouMessageType.gift:
+        _handleGiftMessageParsed(message);
+        break;
+      case KuaishouMessageType.like:
+        _handleLikeMessageParsed(message);
+        break;
+      case KuaishouMessageType.userEnter:
+        _handleUserEnterParsed(message);
+        break;
+      case KuaishouMessageType.onlineCount:
+        _handleOnlineCountParsed(message);
+        break;
+      case KuaishouMessageType.liveStatus:
+        // 直播状态变更，暂不处理
+        break;
+      case KuaishouMessageType.unknown:
+        // 未知消息类型，忽略
+        break;
     }
   }
 
   // ──────────────────── 消息处理 ────────────────────
 
   /// 处理聊天弹幕消息
-  void _handleChatMessage(Map<String, dynamic> json) {
-    final userName = json["userName"]?.toString() ??
-        json["user"]?["name"]?.toString() ??
-        json["user"]?["nickName"]?.toString() ??
-        json["author"]?["name"]?.toString() ??
-        json["author"]?["nickName"]?.toString() ??
-        "未知用户";
-
-    final content = json["content"]?.toString() ??
-        json["message"]?.toString() ??
-        json["text"]?.toString() ??
-        "";
+  void _handleChatMessageParsed(KuaishouMessage message) {
+    final userName = message.userName ?? "未知用户";
+    final content = message.content ?? "";
 
     if (content.isEmpty) return;
 
-    // 提取弹幕颜色
-    final color = _parseColor(json["color"] ?? json["fontColor"]);
-
     onMessage?.call(LiveMessage(
       type: LiveMessageType.chat,
-      color: color,
+      color: LiveMessageColor.white,
       message: content,
       userName: userName,
     ));
   }
 
   /// 处理在线人数更新
-  void _handleOnlineCount(Map<String, dynamic> json) {
-    final online = json["count"] ??
-        json["online"] ??
-        json["onlineCount"] ??
-        json["watchingCount"] ??
-        json["data"] ??
-        0;
+  void _handleOnlineCountParsed(KuaishouMessage message) {
+    final online = message.onlineCount ?? 0;
 
     onMessage?.call(LiveMessage(
       type: LiveMessageType.online,
-      data: online is int ? online : int.tryParse(online.toString()) ?? 0,
+      data: online,
       color: LiveMessageColor.white,
       message: "",
       userName: "",
@@ -360,17 +271,10 @@ class KuaishouDanmaku implements LiveDanmaku {
   }
 
   /// 处理礼物消息
-  void _handleGiftMessage(Map<String, dynamic> json) {
-    final userName = json["userName"]?.toString() ??
-        json["user"]?["name"]?.toString() ??
-        json["author"]?["name"]?.toString() ??
-        "未知用户";
-
-    final giftName = json["giftName"]?.toString() ??
-        json["gift"]?["name"]?.toString() ??
-        "礼物";
-
-    final count = json["count"] ?? json["num"] ?? 1;
+  void _handleGiftMessageParsed(KuaishouMessage message) {
+    final userName = message.userName ?? "未知用户";
+    final giftName = message.giftName ?? "礼物";
+    final count = message.giftCount ?? 1;
 
     onMessage?.call(LiveMessage(
       type: LiveMessageType.gift,
@@ -380,13 +284,18 @@ class KuaishouDanmaku implements LiveDanmaku {
     ));
   }
 
-  /// 处理进入直播间提示
-  void _handleEnterRoom(Map<String, dynamic> json) {
-    final userName = json["userName"]?.toString() ??
-        json["user"]?["name"]?.toString() ??
-        json["author"]?["name"]?.toString() ??
-        "";
+  /// 处理点赞消息
+  void _handleLikeMessageParsed(KuaishouMessage message) {
+    final userName = message.userName ?? "";
+    if (userName.isEmpty) return;
 
+    // 点赞消息可以显示为系统消息或忽略
+    // 这里选择忽略，不显示在弹幕中
+  }
+
+  /// 处理用户进入直播间
+  void _handleUserEnterParsed(KuaishouMessage message) {
+    final userName = message.userName ?? "";
     if (userName.isEmpty) return;
 
     onMessage?.call(LiveMessage(
@@ -397,147 +306,11 @@ class KuaishouDanmaku implements LiveDanmaku {
     ));
   }
 
-  /// 对未知类型的消息进行自动结构识别
-  void _autoDetectMessage(Map<String, dynamic> json) {
-    // 如果包含 content/message 字段，当作聊天消息
-    if (json.containsKey("content") ||
-        json.containsKey("message") ||
-        json.containsKey("text")) {
-      _handleChatMessage(json);
-      return;
-    }
-
-    // 如果包含 online/count 字段，当作在线人数
-    if (json.containsKey("online") ||
-        json.containsKey("count") ||
-        json.containsKey("onlineCount")) {
-      _handleOnlineCount(json);
-      return;
-    }
-
-    // 如果包含 gift 字段，当作礼物
-    if (json.containsKey("gift") || json.containsKey("giftName")) {
-      _handleGiftMessage(json);
-    }
-  }
-
-  // ──────────────────── HTTP 长轮询（降级方案） ────────────────────
-
-  /// HTTP长轮询拉取弹幕消息
-  void _pollMessages() async {
-    while (_isRunning) {
-      try {
-        final result = await _dio.post(
-          _chatListUrl,
-          data: {
-            "liveStreamId": _args!.liveStreamId,
-            if (_args!.token.isNotEmpty) "token": _args!.token,
-            "cursor": _pollingCursor,
-            "pageSize": 50,
-          },
-          options: Options(contentType: Headers.formUrlEncodedContentType),
-        );
-
-        _reconnectAttempts = 0;
-
-        if (result.data is Map) {
-          final data = result.data as Map;
-          final list = data["data"]?["list"] as List? ?? [];
-          if (list.isEmpty) {
-            CoreLog.i("快手弹幕长轮询: 无新消息, response keys=${data.keys.toList()}");
-          }
-
-          for (var item in list) {
-            if (item is Map<String, dynamic>) {
-              final type = item["type"]?.toString();
-              _handleEvent(type, item);
-            }
-          }
-
-          // 更新游标
-          final newCursor = data["data"]?["cursor"];
-          if (newCursor != null) {
-            _pollingCursor = newCursor is int
-                ? newCursor
-                : int.tryParse(newCursor.toString()) ?? _pollingCursor;
-          }
-        }
-
-        // 短暂延迟避免请求过于频繁
-        await Future.delayed(const Duration(milliseconds: 1500));
-      } catch (e) {
-        if (!_isRunning) break;
-        CoreLog.error(e);
-        _reconnectAttempts++;
-        if (_reconnectAttempts >= _maxReconnectAttempts) {
-          onClose?.call("长轮询超过最大重试次数，弹幕连接已断开");
-          _isRunning = false;
-          break;
-        }
-        await Future.delayed(
-            Duration(seconds: 2 * _reconnectAttempts));
-      }
-    }
-  }
-
-  // ──────────────────── 重连与保活 ────────────────────
-
-  /// 处理连接断开，进行指数退避重连
-  void _handleDisconnect(String reason) {
-    if (!_isRunning) return;
-
-    _cancelToken?.cancel();
-    _cancelToken = null;
-
-    _reconnectAttempts++;
-    if (_reconnectAttempts > _maxReconnectAttempts) {
-      onClose?.call("超过最大重连次数，弹幕连接已断开");
-      _isRunning = false;
-      return;
-    }
-
-    onClose?.call("$reason，正在尝试第$_reconnectAttempts次重连...");
-
-    final delaySeconds = _reconnectAttempts * 2;
-    _reconnectTimer?.cancel();
-    _reconnectTimer = Timer(Duration(seconds: delaySeconds), () {
-      if (_usePolling) {
-        _pollMessages();
-      } else {
-        _connectSSE();
-      }
-    });
-  }
-
-  /// 启动心跳定时器
-  void _startHeartbeatTimer() {
-    _heartbeatTimer?.cancel();
-    _heartbeatTimer = Timer.periodic(
-      Duration(milliseconds: heartbeatTime),
-      (_) => heartbeat(),
-    );
-  }
-
   // ──────────────────── 工具方法 ────────────────────
 
-  /// 解析弹幕颜色
-  LiveMessageColor _parseColor(dynamic colorValue) {
-    if (colorValue == null) return LiveMessageColor.white;
-    if (colorValue is int) {
-      return colorValue == 0
-          ? LiveMessageColor.white
-          : LiveMessageColor.numberToColor(colorValue);
-    }
-    if (colorValue is String) {
-      // 处理 #RRGGBB 格式
-      var hex = colorValue.replaceAll('#', '');
-      if (hex.length == 6) {
-        final intColor = int.tryParse(hex, radix: 16);
-        if (intColor != null) {
-          return LiveMessageColor.numberToColor(intColor);
-        }
-      }
-    }
-    return LiveMessageColor.white;
-  }
+  /// 获取当前连接状态
+  bool get isConnected => _webSocketUtils?.status == SocketStatus.connected;
+
+  /// 获取当前运行状态
+  bool get isRunning => _isRunning;
 }

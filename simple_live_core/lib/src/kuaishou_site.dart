@@ -642,9 +642,30 @@ class KuaishouSite implements LiveSite {
     String liveStreamId = liveStream["id"]?.toString() ?? "";
     String danmakuToken = liveroom["token"]?.toString() ?? "";
 
+    // 尝试从页面数据中提取 WebSocket URL
+    String wsUrl = "";
+    // 1. 尝试从 playItem 中获取
+    wsUrl = playItem["websocketUrl"]?.toString() ?? "";
+    // 2. 尝试从 liveStream 中获取
+    if (wsUrl.isEmpty) {
+      wsUrl = liveStream["websocketUrl"]?.toString() ?? "";
+    }
+    // 3. 尝试从 liveroom 中获取
+    if (wsUrl.isEmpty) {
+      wsUrl = liveroom["websocketUrl"]?.toString() ?? "";
+    }
+    // 4. 尝试从整个 JSON 中搜索
+    if (wsUrl.isEmpty) {
+      final wsMatch = RegExp(r'"websocketUrl":"(wss://[^"]+)"').firstMatch(jsonStr);
+      if (wsMatch != null) {
+        wsUrl = wsMatch.group(1) ?? "";
+      }
+    }
+
     CoreLog.i("快手房间详情: roomId=$roomId, isLiving=$isLiving, "
         "liveStreamId=$liveStreamId, "
         "token=${danmakuToken.isNotEmpty ? '有' : '无'}, "
+        "wsUrl=${wsUrl.isNotEmpty ? '有' : '无'}, "
         "playUrls keys=${(liveStream['playUrls'] as Map?)?.keys.toList()}");
 
     return LiveRoomDetail(
@@ -670,6 +691,7 @@ class KuaishouSite implements LiveSite {
         authorId: roomId,
         token: danmakuToken,
         cookie: cookie,
+        wsUrl: wsUrl,
       ),
     );
   }
