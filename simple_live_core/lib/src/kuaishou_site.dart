@@ -742,18 +742,11 @@ class KuaishouSite implements LiveSite {
   Future<LivePlayUrl> getPlayUrls(
       {required LiveRoomDetail detail,
       required LivePlayQuality quality}) async {
-    // 快手 CDN 需要 Referer 和 Cookie 头才能正常播放
-    final playHeaders = <String, String>{
-      'Referer': 'https://live.kuaishou.com/',
-      'Origin': 'https://live.kuaishou.com',
-      'User-Agent': _ua.isNotEmpty ? _ua : fakeUserAgent()['userAgent']!,
-    };
-    if (cookie.isNotEmpty) {
-      playHeaders['Cookie'] = cookie;
-    }
+    // pure_live 对快手不传任何额外 headers，快手 CDN URL 是带签名的，
+    // 额外 headers（Referer/Cookie/UA）可能导致 CDN 鉴权失败
     return LivePlayUrl(
       urls: List<String>.from(quality.data as List),
-      headers: playHeaders,
+      headers: {},
     );
   }
 

@@ -53,26 +53,15 @@ mixin PlayerMixin {
       await pp.setProperty('force-seekable', 'yes');
     }
 
-    // ── 直播流优化参数 ──
-    // 网络超时：15秒内未收到数据则断开，避免长时间卡住
-    await pp.setProperty('network-timeout', '15');
-    // 直播缓存：auto 模式允许 mpv 自动管理缓存，避免反复重载
-    // （之前用 cache=no 会导致画面不断重新加载流数据）
-    await pp.setProperty('cache', 'auto');
-    // 缓存2秒数据，平滑网络抖动又不引入过多延迟
-    await pp.setProperty('cache-secs', '2');
-    // 解复用器最大缓冲 50MB，防止快手等大码率流溢出
-    await pp.setProperty('demuxer-max-bytes', '50MB');
-    // 流缓冲大小 2MB，足够平滑又不引入过多延迟
-    await pp.setProperty('stream-buffer-size', '2097152');
-    // 禁用解复用器缓冲捐赠，避免直播流场景下的内存堆积
-    await pp.setProperty('demuxer-donate-buffer', 'no');
-    // 断线自动重连：最多尝试5次，每次间隔2秒，总超时30秒
-    await pp.setProperty('demuxer-lavf-o',
-        'reconnect=1,reconnect_at_eof=1,reconnect_streamed=1,reconnect_delay_max=5');
-    Log.d('[Player] 直播流参数已设置: network-timeout=15, cache=auto, cache-secs=2, '
-        'demuxer-max-bytes=50MB, stream-buffer-size=2097152, '
-        'demuxer-donate-buffer=no, reconnect=5x2s');
+    // ── 直播流优化参数（对齐 pure_live） ──
+    // 网络超时：30秒内未收到数据则断开
+    await pp.setProperty('network-timeout', '30');
+    // 增大探测尺寸，加快直播流识别
+    await pp.setProperty('demuxer-lavf-probsize', '2097152');
+    // 缩短分析时长，加快起播速度
+    await pp.setProperty('demuxer-lavf-analyzeduration', '10');
+    Log.d('[Player] 直播流参数已设置: network-timeout=30, '
+        'demuxer-lavf-probsize=2097152, demuxer-lavf-analyzeduration=10');
   }
 
   /// 视频控制器
@@ -754,7 +743,6 @@ class PlayerController extends BaseController
   void mediaError(String error) {
     WakelockPlus.disable();
   }
-
   void showDebugInfo() {
     Utils.showBottomSheet(
       title: "播放信息",

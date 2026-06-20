@@ -432,7 +432,7 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
     await initializePlayer();
 
     await player.open(Playlist(mediaList));
-    Log.d('[Player] 开始播放，stream-buffer-size=2097152 (2MB)');
+    Log.d('[Player] 开始播放，线路数=${playUrls.length}');
   }
 
   void setPlayer() async {
@@ -447,13 +447,13 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
     super.mediaEnd();
     if (mediaErrorRetryCount < 3) {
       Log.d("播放结束，尝试第${mediaErrorRetryCount + 1}次刷新");
+      // 重试间隔 3 秒，避免过快循环
       if (mediaErrorRetryCount >= 1) {
-        //延迟一秒再刷新
-        await Future.delayed(const Duration(seconds: 1));
+        await Future.delayed(const Duration(seconds: 3));
       }
       mediaErrorRetryCount += 1;
-      // 第2次及以后重试时，重新获取播放地址（而非仅重放同一URL）
-      if (mediaErrorRetryCount >= 2 && detail.value != null && currentQuality >= 0) {
+      // 前 2 次重试先尝试切换线路，最后一次才重新获取地址
+      if (mediaErrorRetryCount >= 3 && detail.value != null && currentQuality >= 0) {
         addSysMsg("正在重新获取播放地址...");
         getPlayUrl();
       } else {
@@ -477,13 +477,13 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
     super.mediaError(error);
     if (mediaErrorRetryCount < 3) {
       Log.d("播放失败，尝试第${mediaErrorRetryCount + 1}次刷新");
+      // 重试间隔 3 秒，避免过快循环
       if (mediaErrorRetryCount >= 1) {
-        //延迟一秒再刷新
-        await Future.delayed(const Duration(seconds: 1));
+        await Future.delayed(const Duration(seconds: 3));
       }
       mediaErrorRetryCount += 1;
-      // 第2次及以后重试时，重新获取播放地址（而非仅重放同一URL）
-      if (mediaErrorRetryCount >= 2 && detail.value != null && currentQuality >= 0) {
+      // 前 2 次重试先尝试切换线路，最后一次才重新获取地址
+      if (mediaErrorRetryCount >= 3 && detail.value != null && currentQuality >= 0) {
         addSysMsg("播放失败，正在重新获取播放地址...");
         getPlayUrl();
       } else {
